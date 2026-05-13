@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Barbie Run</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #ffd6e8;
+    color: #fff;
+    font-family: system-ui, "Segoe UI", sans-serif;
+    overflow: hidden;
+    height: 100%;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  #wrap {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    background: #ffc1d9;
+    box-shadow: 0 0 40px rgba(255, 105, 180, 0.5);
+    max-width: 100%;
+    max-height: 100%;
+    cursor: pointer;
+  }
+  #hud {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-weight: 800;
+    text-shadow: 2px 2px 0 #c2185b, -2px -2px 0 #c2185b, 2px -2px 0 #c2185b, -2px 2px 0 #c2185b;
+    pointer-events: none;
+    text-align: center;
+    font-size: 22px;
+    line-height: 1.4;
+    color: #fff;
+  }
+  #hud .small { font-size: 13px; opacity: 0.95; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="540" height="800"></canvas>
+</div>
+<div id="hud">
+  <div>✨ <span id="score">0</span></div>
+  <div class="small">💖 <span id="coins">0</span> &nbsp; Best: <span id="best">0</span></div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const scoreEl = document.getElementById('score');
+  const coinsEl = document.getElementById('coins');
+  const bestEl  = document.getElementById('best');
+
+  const BEST_KEY = 'barbieRun_best_v1';
+  let best = parseInt(localStorage.getItem(BEST_KEY) || '0', 10);
+  bestEl.textContent = best;
+
+  // ---------- Perspektive ----------
+  const Z_FAR = 60;
+  const VANISH_X = W / 2;
+  const VANISH_Y = H * 0.32;
+  const GROUND_Y = H * 0.92;
+  const LANES = [-1, 0, 1];
+  const LANE_WIDTH_NEAR = 110;
+
+  function projectX(worldX, z) {
+    const t = z / (Z_FAR + 6);
+    const nearX = VANISH_X + worldX * LANE_WIDTH_NEAR;
+    const farX  = VANISH_X + worldX * 14;
+    return nearX + (farX - nearX) * t;
+  }
+  function projectY(z) {
+    const t = z / (Z_FAR + 6);
+    return GROUND_Y + (VANISH_Y - GROUND_Y) * t;
+  }
+  function projectScale(z) {
+    const t = z / (Z_FAR + 6);
+    return 1 - t * 0.92;
+  }
+
+  // ---------- Zustand ----------
+  let state, running = false, dead = false;
+  let lastT = 0;
+  let glitter = [];
+
+  function freshState() {
+    return {
+      lane: 0, laneX: 0,
+      switching: 0, switchFrom: 0, switchTo: 0,
+      y: 0, vy: 0, onGround: true,
+      sliding: false, slideT: 0,
+      speed: 18, distance: 0, coins: 0, runT: 0,
+      obstacles: [], coinsArr: [], pickups: [],
+      spawnTimer: 0,
+      magnet: 0, jetpack: 0, shield: 0,
+      bgScroll: 0,
+    };
+  }
+
+  function resetGame() {
+    state = freshState();
+    for (let i = 0; i < 14; i++) trySpawn();
+    running = true;
+    dead = false;
+    lastT = performance.now();
+    glitter = [];
+  }
+
+  function trySpawn() {
+    const r = Math.random();
+    const z = Z_FAR + Math.random() * 6;
+
+    if (r < 0.15) {
+      // Lange Limousine
+      const lane = LANES[(Math.random() * 3) | 0];
+      const len = 4 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < len; i++) {
+        state.obstacles.push({ type: 'limo', lane, z: z + i * 4, h: 60 });
+      }
+      const otherLane = LANES.filter(l => l !== lane)[Math.floor(Math.random() * 2)];
+      for (let i = 0; i < len; i++) {
+        state.coinsArr.push({ lane: otherLane, z: z + i * 4, y: 0 });
+      }
+    } else if (r < 0.4) {
+      // Niedrige Hutschachteln — drüber rutschen
+      const lane = LANES[(Math.random() * 3) | 0];
+      state.obstacles.push({ type: 'lowRack', lane, z, h: 30 });
+    } else if (r < 0.6) {
+      // Kleiderständer — drüber springen
+      const lane = LANES[(Math.random() * 3) | 0];
+      state.obstacles.push({ type: 'rack', lane, z, h: 40 });
+    } else if (r < 0.75) {
+      const baseLane = LANES[(Math.random() * 3) | 0];
+      const len = 5 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < len; i++) {
+        state.coinsArr.push({ lane: baseLane, z: z + i * 2, y: 0 });
+      }
+    } else if (r < 0.83) {
+      const lane = LANES[(Math.random() * 3) | 0];
+      for (let i = 0; i < 6; i++) {
+        const t = i / 5;
+        state.coinsArr.push({
+          lane, z: z + i * 2,
+          y: -Math.sin(t * Math.PI) * 50,
+        });
+      }
+      if (Math.random() < 0.5) {
+        state.obstacles.push({ type: 'rack', lane, z: z + 4, h: 40 });
+      }
+    } else if (r < 0.92) {
+      const lane = LANES[(Math.random() * 3) | 0];
+      const types = ['magnet', 'jetpack', 'shield'];
+      const type = types[(Math.random() * types.length) | 0];
+      state.pickups.push({ type, lane, z });
+    } else {
+      for (let i = 0; i < 8; i++) {
+        state.coinsArr.push({
+          lane: i % 2 === 0 ? -1 : 1,
+          z: z + i * 1.6,
+          y: 0,
+        });
+      }
+    }
+  }
+
+  // ---------- Input ----------
+  window.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
+    if (!running) {
+      if (k === ' ' || k === 'enter') resetGame();
+      return;
+    }
+    if (k === 'arrowleft'  || k === 'a') switchLane(-1);
+    if (k === 'arrowright' || k === 'd') switchLane(1);
+    if (k === 'arrowup'    || k === 'w' || k === ' ') jump();
+    if (k === 'arrowdown'  || k === 's') startSlide();
+  });
+
+  let touchStart = null;
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (!running) { resetGame(); return; }
+    touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: false });
+  canvas.addEventListener('touchend', e => {
+    if (!touchStart) return;
+    const dx = (e.changedTouches[0].clientX - touchStart.x);
+    const dy = (e.changedTouches[0].clientY - touchStart.y);
+    const dist = Math.hypot(dx, dy);
+    if (dist < 20) jump();
+    else if (Math.abs(dx) > Math.abs(dy)) switchLane(dx > 0 ? 1 : -1);
+    else if (dy < 0) jump(); else startSlide();
+    touchStart = null;
+  });
+  canvas.addEventListener('mousedown', () => { if (!running) resetGame(); });
+
+  function switchLane(dir) {
+    if (dead) return;
+    const target = Math.max(-1, Math.min(1, state.lane + dir));
+    if (target === state.lane) return;
+    state.switchFrom = state.laneX;
+    state.switchTo = target;
+    state.lane = target;
+    state.switching = 0.18;
+  }
+  function jump() {
+    if (dead) return;
+    if (state.onGround && !state.sliding) {
+      state.vy = -520;
+      state.onGround = false;
+    } else if (state.jetpack > 0) {
+      state.vy = -380;
+    }
+  }
+  function startSlide() {
+    if (dead) return;
+    if (state.onGround) {
+      state.sliding = true;
+      state.slideT = 0.6;
+    } else {
+      state.vy = 800;
+    }
+  }
+
+  // ---------- Update ----------
+  function update(dt) {
+    if (!running || dead) return;
+    state.speed = 18 + Math.min(28, state.distance / 80);
+    state.distance += state.speed * dt;
+    state.runT += state.speed * dt * 0.4;
+    state.bgScroll += state.speed * dt * 8;
+
+    if (state.switching > 0) {
+      state.switching -= dt;
+      const t = 1 - Math.max(0, state.switching) / 0.18;
+      state.laneX = state.switchFrom + (state.switchTo - state.switchFrom) * easeOut(t);
+      if (state.switching <= 0) state.laneX = state.switchTo;
+    } else {
+      state.laneX = state.lane;
+    }
+
+    if (!state.onGround) {
+      if (state.jetpack > 0) {
+        state.vy += 600 * dt;
+        state.y += state.vy * dt;
+        if (state.y < -180) state.y = -180;
+        if (state.y > 0) state.y = 0;
+      } else {
+        state.vy += 1400 * dt;
+        state.y += state.vy * dt;
+        if (state.y >= 0) {
+          state.y = 0;
+          state.vy = 0;
+          state.onGround = true;
+        }
+      }
+    }
+    if (state.sliding) {
+      state.slideT -= dt;
+      if (state.slideT <= 0) state.sliding = false;
+    }
+    if (state.magnet > 0)  state.magnet  = Math.max(0, state.magnet  - dt);
+    if (state.jetpack > 0) state.jetpack = Math.max(0, state.jetpack - dt);
+    if (state.shield > 0)  state.shield  = Math.max(0, state.shield  - dt);
+
+    const dz = state.speed * dt;
+    for (const o of state.obstacles) o.z -= dz;
+    for (const c of state.coinsArr)  c.z -= dz;
+    for (const p of state.pickups)   p.z -= dz;
+
+    state.obstacles = state.obstacles.filter(o => o.z > -3);
+    state.coinsArr  = state.coinsArr.filter(c => c.z > -3);
+    state.pickups   = state.pickups.filter(p => p.z > -3);
+
+    state.spawnTimer -= dt;
+    if (state.spawnTimer <= 0) {
+      trySpawn();
+      state.spawnTimer = 0.4 + Math.random() * 0.4;
+    }
+
+    if (state.magnet > 0) {
+      for (const c of state.coinsArr) {
+        if (c.z < 14) {
+          c.lane = state.laneX;
+          c.y = Math.max(c.y, state.y);
+        }
+      }
+    }
+
+    for (const o of state.obstacles) {
+      if (o.z > 1.5 || o.z < -0.5) continue;
+      if (!sameLane(state.laneX, o.lane)) continue;
+      if (o.type === 'limo') {
+        if (state.y > -40) { hit(); return; }
+      } else if (o.type === 'rack') {
+        if (state.y > -28) { hit(); return; }
+      } else if (o.type === 'lowRack') {
+        if (!state.sliding && state.y > -8) { hit(); return; }
+      }
+    }
+
+    for (let i = state.coinsArr.length - 1; i >= 0; i--) {
+      const c = state.coinsArr[i];
+      if (c.z > 1.2 || c.z < -0.5) continue;
+      if (!sameLane(state.laneX, c.lane)) continue;
+      const yDiff = c.y - state.y;
+      if (Math.abs(yDiff) < 50) {
+        state.coinsArr.splice(i, 1);
+        state.coins++;
+        spawnSparkle(c.lane, c.z, c.y);
+      }
+    }
+    for (let i = state.pickups.length - 1; i >= 0; i--) {
+      const p = state.pickups[i];
+      if (p.z > 1.2 || p.z < -0.5) continue;
+      if (!sameLane(state.laneX, p.lane)) continue;
+      state.pickups.splice(i, 1);
+      if (p.type === 'magnet')  state.magnet  = 7;
+      if (p.type === 'jetpack') { state.jetpack = 5; state.onGround = false; state.vy = -200; }
+      if (p.type === 'shield')  state.shield  = 6;
+      flashMsg = labelFor(p.type);
+      flashT = 1.2;
+    }
+
+    const finalScore = Math.floor(state.distance) + state.coins * 5;
+    scoreEl.textContent = finalScore;
+    coinsEl.textContent = state.coins;
+
+    // Hintergrund-Glitzer
+    if (Math.random() < 0.4) {
+      glitter.push({
+        x: Math.random() * W,
+        y: Math.random() * VANISH_Y,
+        life: 0.8, max: 0.8,
+        r: 1 + Math.random() * 2,
+      });
+    }
+  }
+
+  function easeOut(t) { return 1 - (1 - t) * (1 - t); }
+  function sameLane(a, b) { return Math.abs(a - b) < 0.35; }
+  function labelFor(t) {
+    if (t === 'magnet')  return '💄 Lippenstift-Magnet!';
+    if (t === 'jetpack') return '👠 High-Heel-Boost!';
+    if (t === 'shield')  return '👛 Schild aktiviert!';
+    return '';
+  }
+
+  let flashMsg = '', flashT = 0;
+
+  let sparkles = [];
+  function spawnSparkle(lane, z, y) {
+    const sx = projectX(lane, Math.max(0, z));
+    const sy = projectY(Math.max(0, z)) + y * projectScale(Math.max(0, z));
+    for (let i = 0; i < 8; i++) {
+      sparkles.push({
+        x: sx, y: sy,
+        vx: (Math.random() - 0.5) * 80,
+        vy: -Math.random() * 100 - 20,
+        life: 0.7, max: 0.7,
+        c: ['#ff4081', '#ec407a', '#f8bbd0', '#fff'][i % 4],
+        r: 2 + Math.random() * 2,
+      });
+    }
+  }
+
+  function hit() {
+    if (state.shield > 0) {
+      state.shield = 0;
+      flashMsg = '👛 Schild zerbrochen!';
+      flashT = 1.2;
+      state.obstacles = state.obstacles.filter(o => o.z > 3);
+      return;
+    }
+    dead = true;
+    running = false;
+    const finalScore = Math.floor(state.distance) + state.coins * 5;
+    if (finalScore > best) {
+      best = finalScore;
+      localStorage.setItem(BEST_KEY, String(best));
+      bestEl.textContent = best;
+    }
+    for (let i = 0; i < 24; i++) {
+      const a = Math.random() * Math.PI * 2;
+      sparkles.push({
+        x: projectX(state.laneX, 0),
+        y: projectY(0) + state.y - 30,
+        vx: Math.cos(a) * 200,
+        vy: Math.sin(a) * 200 - 80,
+        life: 1, max: 1,
+        c: '#e91e63',
+        r: 3 + Math.random() * 3,
+      });
+    }
+  }
+
+  // ---------- Zeichnen ----------
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, VANISH_Y + 60);
+    g.addColorStop(0, '#7a1f5a');
+    g.addColorStop(0.4, '#e91e63');
+    g.addColorStop(0.8, '#ff8ab8');
+    g.addColorStop(1, '#ffd0e3');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, VANISH_Y + 60);
+
+    // Sonne / Glanz
+    const sg = ctx.createRadialGradient(W / 2, VANISH_Y + 10, 10, W / 2, VANISH_Y + 10, 90);
+    sg.addColorStop(0, '#fff59d');
+    sg.addColorStop(0.5, 'rgba(255, 245, 157, 0.6)');
+    sg.addColorStop(1, 'rgba(255, 245, 157, 0)');
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.arc(W / 2, VANISH_Y + 10, 90, 0, Math.PI * 2);
+    ctx.fill();
+
+    drawSkyline();
+
+    // Glitzer-Partikel
+    for (const g of glitter) {
+      g.life -= 0.016;
+      ctx.globalAlpha = Math.max(0, g.life / g.max);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    glitter = glitter.filter(g => g.life > 0);
+  }
+
+  function drawSkyline() {
+    ctx.save();
+    const scroll = -((state ? state.bgScroll : 0) * 0.3) % 80;
+    for (let side = -1; side <= 1; side += 2) {
+      for (let i = -2; i < 12; i++) {
+        const x = side === -1 ? (i * 70 + scroll) : (W - i * 70 + 70 - scroll);
+        const h = 80 + ((i * 53) % 60);
+        // Rosafarbene Häuschen (Barbie's Mansion-Style)
+        ctx.fillStyle = '#c2185b';
+        ctx.fillRect(x, VANISH_Y - h + 60, 60, h);
+        // Dach
+        ctx.fillStyle = '#880e4f';
+        ctx.beginPath();
+        ctx.moveTo(x - 4, VANISH_Y - h + 60);
+        ctx.lineTo(x + 30, VANISH_Y - h + 44);
+        ctx.lineTo(x + 64, VANISH_Y - h + 60);
+        ctx.closePath();
+        ctx.fill();
+        // Glitzernde Fenster
+        ctx.fillStyle = '#fff59d';
+        for (let wy = 0; wy < h - 20; wy += 14) {
+          for (let wx = 0; wx < 4; wx++) {
+            if (((i * 7 + wy + wx) % 3) !== 0) continue;
+            ctx.fillRect(x + 6 + wx * 12, VANISH_Y - h + 64 + wy, 6, 6);
+          }
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawGround() {
+    // Pinker Grasrand
+    ctx.fillStyle = '#ec407a';
+    ctx.fillRect(0, VANISH_Y + 30, W, H - (VANISH_Y + 30));
+
+    // Laufbahn — pinker Asphalt mit weißem Glitzer
+    ctx.beginPath();
+    ctx.moveTo(projectX(-1.5, Z_FAR), projectY(Z_FAR));
+    ctx.lineTo(projectX( 1.5, Z_FAR), projectY(Z_FAR));
+    ctx.lineTo(projectX( 1.5, 0), projectY(0));
+    ctx.lineTo(projectX(-1.5, 0), projectY(0));
+    ctx.closePath();
+    ctx.fillStyle = '#f48fb1';
+    ctx.fill();
+
+    // Mittelstreifen mit Herzchen
+    const tieSpacing = 1.2;
+    const scroll = (state.distance * 1) % tieSpacing;
+    for (let z = scroll; z < Z_FAR; z += tieSpacing * 2) {
+      const yA = projectY(z);
+      const yB = projectY(z + 0.4);
+      // Streifen pro Spurgrenze
+      ctx.fillStyle = '#fff';
+      for (const lane of [-0.5, 0.5]) {
+        const x = projectX(lane, z);
+        const x2 = projectX(lane, z + 0.4);
+        const s = projectScale(z);
+        ctx.fillRect(x - 4 * s, yA, (x2 - x) + 8 * s, (yB - yA) + 1);
+      }
+    }
+
+    // Spur-Linien (durchgehend, dünn)
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 1;
+    for (const lane of [-1.5, -0.5, 0.5, 1.5]) {
+      ctx.beginPath();
+      ctx.moveTo(projectX(lane, Z_FAR), projectY(Z_FAR));
+      ctx.lineTo(projectX(lane, 0), projectY(0));
+      ctx.stroke();
+    }
+  }
+
+  function drawObstacle(o) {
+    if (o.z > Z_FAR) return;
+    const z = Math.max(0, o.z);
+    const x = projectX(o.lane, z);
+    const y = projectY(z);
+    const s = projectScale(z);
+
+    if (o.type === 'limo') {
+      // Pinkes Cabrio / Limo
+      const carW = 110 * s;
+      const carH = 80 * s;
+      // Schatten unter Auto
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(x, y - 4 * s, carW * 0.55, 6 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Auto-Körper
+      ctx.fillStyle = '#e91e63';
+      ctx.fillRect(x - carW / 2, y - carH, carW, carH * 0.7);
+      // Dach
+      ctx.fillStyle = '#c2185b';
+      ctx.beginPath();
+      ctx.moveTo(x - carW * 0.4, y - carH);
+      ctx.lineTo(x - carW * 0.25, y - carH * 1.4);
+      ctx.lineTo(x + carW * 0.25, y - carH * 1.4);
+      ctx.lineTo(x + carW * 0.4, y - carH);
+      ctx.closePath();
+      ctx.fill();
+      // Windschutz
+      ctx.fillStyle = '#b3e5fc';
+      ctx.beginPath();
+      ctx.moveTo(x - carW * 0.32, y - carH * 1.0);
+      ctx.lineTo(x - carW * 0.22, y - carH * 1.32);
+      ctx.lineTo(x + carW * 0.22, y - carH * 1.32);
+      ctx.lineTo(x + carW * 0.32, y - carH * 1.0);
+      ctx.closePath();
+      ctx.fill();
+      // Räder
+      ctx.fillStyle = '#222';
+      ctx.beginPath();
+      ctx.arc(x - carW * 0.32, y - carH * 0.1, 8 * s, 0, Math.PI * 2);
+      ctx.arc(x + carW * 0.32, y - carH * 0.1, 8 * s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(x - carW * 0.32, y - carH * 0.1, 3 * s, 0, Math.PI * 2);
+      ctx.arc(x + carW * 0.32, y - carH * 0.1, 3 * s, 0, Math.PI * 2);
+      ctx.fill();
+      // Scheinwerfer
+      ctx.fillStyle = '#fff59d';
+      ctx.beginPath();
+      ctx.arc(x - carW * 0.4, y - carH * 0.35, 3 * s, 0, Math.PI * 2);
+      ctx.arc(x + carW * 0.4, y - carH * 0.35, 3 * s, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (o.type === 'rack') {
+      // Kleiderständer mit Kleidern
+      const bW = 90 * s;
+      const bH = 80 * s;
+      // Stange
+      ctx.fillStyle = '#c0c0c0';
+      ctx.fillRect(x - bW / 2, y - bH, bW, 4 * s);
+      // Vertikalpfosten
+      ctx.fillRect(x - bW * 0.45, y - bH * 0.6, 4 * s, bH * 0.6);
+      ctx.fillRect(x + bW * 0.45 - 4 * s, y - bH * 0.6, 4 * s, bH * 0.6);
+      // Kleider/Bügel
+      const dressCols = ['#ec407a', '#ab47bc', '#42a5f5', '#ffeb3b'];
+      for (let i = 0; i < 4; i++) {
+        const dx = x - bW / 2 + (i + 0.5) * (bW / 4);
+        // Bügel-Haken
+        ctx.fillStyle = '#9e9e9e';
+        ctx.fillRect(dx - 1, y - bH, 2 * s, 4 * s);
+        // Kleid (Dreieck)
+        ctx.fillStyle = dressCols[i];
+        ctx.beginPath();
+        ctx.moveTo(dx - 8 * s, y - bH + 4 * s);
+        ctx.lineTo(dx + 8 * s, y - bH + 4 * s);
+        ctx.lineTo(dx + 14 * s, y - bH * 0.3);
+        ctx.lineTo(dx - 14 * s, y - bH * 0.3);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else if (o.type === 'lowRack') {
+      // Niedrige Hutschachteln zum Drüberrutschen
+      const bW = 100 * s;
+      const bH = 40 * s;
+      ctx.fillStyle = '#ce93d8';
+      ctx.fillRect(x - bW / 2, y - bH, bW, bH);
+      ctx.fillStyle = '#ab47bc';
+      ctx.fillRect(x - bW / 2, y - bH, bW, bH * 0.25);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold ' + Math.floor(12 * s) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('↧ SLIDE', x, y - bH * 0.55);
+      ctx.textAlign = 'start';
+      // Schleife oben drauf
+      ctx.fillStyle = '#fff59d';
+      ctx.fillRect(x - 6 * s, y - bH * 1.1, 12 * s, bH * 0.15);
+    }
+  }
+
+  function drawCoin(c) {
+    if (c.z > Z_FAR || c.z < -1) return;
+    const z = Math.max(0, c.z);
+    const x = projectX(c.lane, z);
+    const y = projectY(z) + c.y * projectScale(z) - 30 * projectScale(z);
+    const s = projectScale(z);
+    const sq = Math.abs(Math.cos(performance.now() / 200 + c.z));
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    // Glow
+    const g = ctx.createRadialGradient(0, 0, 4, 0, 0, 22);
+    g.addColorStop(0, 'rgba(255, 64, 129, 0.7)');
+    g.addColorStop(1, 'rgba(255, 64, 129, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+    // Herz (rotierend via sq)
+    const sx = sq * 1.2 + 0.2;
+    ctx.scale(sx, 1);
+    ctx.fillStyle = '#ec407a';
+    drawHeart(0, 0, 14);
+    ctx.fillStyle = '#fff';
+    drawHeart(-3, -3, 4);
+    ctx.restore();
+  }
+
+  function drawHeart(cx, cy, r) {
+    ctx.beginPath();
+    const x = cx, y = cy;
+    ctx.moveTo(x, y + r * 0.3);
+    ctx.bezierCurveTo(x, y - r * 0.5, x - r, y - r * 0.5, x - r, y + r * 0.1);
+    ctx.bezierCurveTo(x - r, y + r * 0.6, x, y + r * 0.9, x, y + r);
+    ctx.bezierCurveTo(x, y + r * 0.9, x + r, y + r * 0.6, x + r, y + r * 0.1);
+    ctx.bezierCurveTo(x + r, y - r * 0.5, x, y - r * 0.5, x, y + r * 0.3);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawPickup(p) {
+    if (p.z > Z_FAR || p.z < -1) return;
+    const z = Math.max(0, p.z);
+    const x = projectX(p.lane, z);
+    const y = projectY(z) - 40 * projectScale(z);
+    const s = projectScale(z);
+    const wob = Math.sin(performance.now() / 250 + p.z) * 4;
+
+    ctx.save();
+    ctx.translate(x, y + wob);
+    ctx.scale(s, s);
+
+    const colors = {
+      magnet:  '#ff4081',
+      jetpack: '#ef5350',
+      shield:  '#ab47bc',
+    };
+    const icons = { magnet: '💄', jetpack: '👠', shield: '👛' };
+
+    const g = ctx.createRadialGradient(0, 0, 5, 0, 0, 30);
+    g.addColorStop(0, colors[p.type]);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = colors[p.type];
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#000';
+    ctx.fillText(icons[p.type], 0, 8);
+    ctx.textAlign = 'start';
+    ctx.restore();
+  }
+
+  function drawBarbie() {
+    const x = projectX(state.laneX, 0);
+    const y = projectY(0) + state.y;
+    const s = 1.05;
+
+    // Schatten
+    const shadowAlpha = state.onGround ? 0.45 : 0.2;
+    ctx.fillStyle = 'rgba(0,0,0,' + shadowAlpha + ')';
+    ctx.beginPath();
+    ctx.ellipse(projectX(state.laneX, 0), projectY(0) + 8, 28 * s, 8 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    // Jetpack-Flammen
+    if (state.jetpack > 0) {
+      ctx.fillStyle = '#ff5722';
+      for (let i = -1; i <= 1; i += 2) {
+        ctx.beginPath();
+        ctx.moveTo(i * 14, -10);
+        ctx.lineTo(i * 22 + (Math.random() - 0.5) * 6, 30);
+        ctx.lineTo(i * 6, 10);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = '#ffeb3b';
+      for (let i = -1; i <= 1; i += 2) {
+        ctx.beginPath();
+        ctx.moveTo(i * 12, -6);
+        ctx.lineTo(i * 16, 18);
+        ctx.lineTo(i * 8, 4);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    if (state.sliding) ctx.translate(0, 20);
+
+    const legS = (state.onGround && !state.sliding) ? Math.sin(state.runT * 4) * 8 : 0;
+    const armS = (state.onGround && !state.sliding) ? -Math.sin(state.runT * 4) * 6 : 0;
+
+    // Beine (Hose / hellblau wie Jeans? — wir machen rosa)
+    ctx.fillStyle = '#fdd9b5'; // Haut
+    if (state.sliding) {
+      ctx.fillRect(-18, -20, 36, 14);
+    } else {
+      ctx.fillRect(-10, -10, 7, 28 + legS * 0.2);
+      ctx.fillRect(  3, -10, 7, 28 - legS * 0.2);
+      // High Heels
+      ctx.fillStyle = '#ec407a';
+      ctx.fillRect(-12, 18 + legS * 0.2, 11, 4);
+      ctx.fillRect(  1, 18 - legS * 0.2, 11, 4);
+    }
+
+    // Kleid (pinkes Tutu)
+    if (state.sliding) {
+      ctx.fillStyle = '#ff4081';
+      ctx.beginPath();
+      ctx.ellipse(0, -32, 26, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#ff4081';
+      // Rock (Trapez)
+      ctx.beginPath();
+      ctx.moveTo(-14, -10);
+      ctx.lineTo( 14, -10);
+      ctx.lineTo( 20, 4);
+      ctx.lineTo(-20, 4);
+      ctx.closePath();
+      ctx.fill();
+      // Tutu-Ruffles
+      ctx.fillStyle = '#f8bbd0';
+      for (let i = -3; i <= 3; i++) {
+        ctx.beginPath();
+        ctx.arc(i * 6, 4, 5, 0, Math.PI);
+        ctx.fill();
+      }
+      // Oberteil
+      ctx.fillStyle = '#ec407a';
+      ctx.beginPath();
+      ctx.ellipse(0, -22, 14, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Glitzer-Linie auf Kleid
+      ctx.fillStyle = '#fff59d';
+      ctx.fillRect(-12, -14, 24, 2);
+    }
+
+    // Arme
+    ctx.fillStyle = '#fdd9b5';
+    if (!state.sliding) {
+      ctx.beginPath();
+      ctx.ellipse(-16, -22 + armS, 5, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse( 16, -22 - armS, 5, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Haare hinten (lang)
+    if (!state.sliding) {
+      ctx.fillStyle = '#fdd835';
+      ctx.beginPath();
+      ctx.ellipse(-12, -38, 8, 22, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse( 12, -38, 8, 22, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Kopf
+    ctx.fillStyle = '#fdd9b5';
+    ctx.beginPath();
+    ctx.arc(0, state.sliding ? -34 : -50, state.sliding ? 10 : 12, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pony / Stirnhaar
+    ctx.fillStyle = '#fdd835';
+    ctx.beginPath();
+    ctx.arc(0, state.sliding ? -36 : -52, state.sliding ? 11 : 13, Math.PI + 0.2, 2 * Math.PI - 0.2);
+    ctx.fill();
+    // Seitliche Strähne
+    ctx.beginPath();
+    ctx.ellipse(9, state.sliding ? -34 : -50, 5, 10, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Krone / Tiara
+    if (!state.sliding) {
+      ctx.fillStyle = '#fff59d';
+      ctx.beginPath();
+      ctx.moveTo(-8, -60);
+      ctx.lineTo(-4, -64);
+      ctx.lineTo(0, -60);
+      ctx.lineTo(4, -64);
+      ctx.lineTo(8, -60);
+      ctx.lineTo(8, -57);
+      ctx.lineTo(-8, -57);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#ec407a';
+      ctx.beginPath();
+      ctx.arc(0, -60, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Gesicht
+    const eyeY = state.sliding ? -35 : -51;
+    ctx.fillStyle = '#0277bd';
+    ctx.beginPath();
+    ctx.arc(-4, eyeY, 2, 0, Math.PI * 2);
+    ctx.arc( 4, eyeY, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(-3, eyeY - 0.5, 0.7, 0, Math.PI * 2);
+    ctx.arc( 5, eyeY - 0.5, 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    // Wangen
+    ctx.fillStyle = 'rgba(244, 143, 177, 0.6)';
+    ctx.beginPath();
+    ctx.arc(-6, eyeY + 4, 2.5, 0, Math.PI * 2);
+    ctx.arc( 6, eyeY + 4, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Mund — Lächeln (oder o bei Sturz)
+    ctx.strokeStyle = '#c2185b';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (dead) {
+      ctx.arc(0, eyeY + 6, 1.5, 0, Math.PI * 2);
+    } else {
+      ctx.arc(0, eyeY + 4, 2.5, 0, Math.PI);
+    }
+    ctx.stroke();
+
+    // Schild
+    if (state.shield > 0) {
+      const a = (performance.now() / 200) % (Math.PI * 2);
+      ctx.strokeStyle = 'rgba(171, 71, 188, 0.9)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, -30, 34, a, a + Math.PI * 1.5);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(171, 71, 188, 0.18)';
+      ctx.beginPath();
+      ctx.arc(0, -30, 34, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function drawSparkles(dt) {
+    for (const p of sparkles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 300 * dt;
+      p.life -= dt;
+      ctx.globalAlpha = Math.max(0, p.life / p.max);
+      ctx.fillStyle = p.c;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    sparkles = sparkles.filter(p => p.life > 0);
+  }
+
+  function drawFlash() {
+    if (flashT > 0 && flashMsg) {
+      ctx.globalAlpha = Math.min(1, flashT);
+      ctx.fillStyle = 'rgba(199, 33, 110, 0.85)';
+      const w = ctx.measureText(flashMsg).width + 40;
+      ctx.fillRect(W / 2 - w / 2, 80, w, 36);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(flashMsg, W / 2, 104);
+      ctx.textAlign = 'start';
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawPowerupHUD() {
+    let x = 16;
+    const y = H - 80;
+    const items = [
+      { active: state.magnet,  label: '💄', t: state.magnet  },
+      { active: state.jetpack, label: '👠', t: state.jetpack },
+      { active: state.shield,  label: '👛', t: state.shield  },
+    ];
+    for (const it of items) {
+      if (it.active > 0) {
+        ctx.fillStyle = 'rgba(199, 33, 110, 0.75)';
+        ctx.fillRect(x, y, 62, 36);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.fillText(it.label, x + 6, y + 26);
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(it.t.toFixed(1) + 's', x + 30, y + 22);
+        x += 70;
+      }
+    }
+  }
+
+  function drawOverlay() {
+    if (dead) {
+      ctx.fillStyle = 'rgba(199, 33, 110, 0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 56px sans-serif';
+      ctx.fillText('Oh nein!', W / 2, H / 2 - 50);
+      ctx.font = 'bold 28px sans-serif';
+      const finalScore = Math.floor(state.distance) + state.coins * 5;
+      ctx.fillText('Score: ' + finalScore, W / 2, H / 2 + 10);
+      ctx.font = '20px sans-serif';
+      ctx.fillText('💖 ' + state.coins + '  ·  ' + Math.floor(state.distance) + 'm', W / 2, H / 2 + 40);
+      ctx.font = '18px sans-serif';
+      ctx.fillText('Tippe / Klick / Leertaste = nochmal', W / 2, H / 2 + 90);
+      ctx.textAlign = 'start';
+    } else if (!running) {
+      ctx.fillStyle = 'rgba(199, 33, 110, 0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 62px sans-serif';
+      ctx.fillText('Barbie Run', W / 2, H / 2 - 90);
+      ctx.font = '18px sans-serif';
+      ctx.fillText('← → / A D = Spur wechseln', W / 2, H / 2 - 30);
+      ctx.fillText('↑ / W / Leertaste / Tap = Springen', W / 2, H / 2);
+      ctx.fillText('↓ / S = Rutschen', W / 2, H / 2 + 30);
+      ctx.fillText('Sammle 💖 und Power-Ups, weiche Limos & Kleiderständern aus', W / 2, H / 2 + 60);
+      ctx.fillStyle = '#fff59d';
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText('Tippe / Klick zum Starten', W / 2, H / 2 + 110);
+      ctx.textAlign = 'start';
+    }
+  }
+
+  // ---------- Loop ----------
+  function loop(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000 || 0);
+    lastT = now;
+
+    if (running && !dead) update(dt);
+    if (flashT > 0) flashT -= dt;
+
+    drawSky();
+    drawGround();
+
+    const drawList = [];
+    if (state) {
+      for (const o of state.obstacles) drawList.push({ z: o.z, fn: () => drawObstacle(o) });
+      for (const c of state.coinsArr)  drawList.push({ z: c.z, fn: () => drawCoin(c) });
+      for (const p of state.pickups)   drawList.push({ z: p.z, fn: () => drawPickup(p) });
+    }
+    drawList.sort((a, b) => b.z - a.z);
+    for (const d of drawList) d.fn();
+
+    if (state) drawBarbie();
+    drawSparkles(dt);
+    if (state) drawPowerupHUD();
+    drawFlash();
+    drawOverlay();
+
+    requestAnimationFrame(loop);
+  }
+
+  state = freshState();
+  for (let i = 0; i < 6; i++) trySpawn();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
