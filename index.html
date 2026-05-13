@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Naja Kart</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #111;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+    overflow: hidden;
+    height: 100%;
+  }
+  #wrap {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    background: #4caf50;
+    box-shadow: 0 0 30px rgba(0,0,0,0.6);
+    image-rendering: pixelated;
+  }
+  #hud {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.55);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 16px;
+    line-height: 1.4;
+    pointer-events: none;
+  }
+  #hud b { color: #ffeb3b; }
+  #item {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 70px;
+    height: 70px;
+    background: rgba(0,0,0,0.55);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 20px;
+  }
+  #overlay h1 { font-size: 48px; margin: 0 0 10px; color: #ffeb3b; }
+  #overlay p { font-size: 18px; max-width: 500px; line-height: 1.5; }
+  #overlay button {
+    margin-top: 20px;
+    padding: 12px 28px;
+    font-size: 20px;
+    background: #ff5722;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  #overlay button:hover { background: #ff7043; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="640"></canvas>
+  <div id="hud">
+    Runde: <b id="lap">1</b> / 3<br/>
+    Position: <b id="pos">1</b> / 4<br/>
+    Zeit: <b id="time">0.0</b>s
+  </div>
+  <div id="item">–</div>
+  <div id="overlay">
+    <h1>Naja Kart</h1>
+    <p>
+      Pfeiltasten oder WASD zum Fahren.<br/>
+      Leertaste benutzt dein Item (Pilz = Boost, Bananenschale = Falle, Schildkrötenpanzer = Angriff).<br/>
+      Fahre durch die <span style="color:#ff9800">orangen Item-Boxen</span>. 3 Runden, schlag die KI!
+    </p>
+    <button id="startBtn">Start</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const lapEl  = document.getElementById('lap');
+  const posEl  = document.getElementById('pos');
+  const timeEl = document.getElementById('time');
+  const itemEl = document.getElementById('item');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+
+  // ---------- Strecke ----------
+  // Die Strecke ist ein Oval mit ein paar Wegpunkten für KI und Rundenlogik.
+  // Mittelpunkt, Radien, Strassenbreite.
+  const track = {
+    cx: W / 2,
+    cy: H / 2,
+    rx: 360,
+    ry: 230,
+    width: 110, // Strassenbreite
+  };
+
+  // Prüft ob Punkt (x,y) auf der Strasse ist (zwischen innerer und äusserer Ellipse).
+  function onTrack(x, y) {
+    const dx = (x - track.cx) / track.rx;
+    const dy = (y - track.cy) / track.ry;
+    const outer = dx * dx + dy * dy; // <= 1 -> innerhalb äusserer
+    const innerRx = track.rx - track.width;
+    const innerRy = track.ry - track.width;
+    const ix = (x - track.cx) / innerRx;
+    const iy = (y - track.cy) / innerRy;
+    const inner = ix * ix + iy * iy; // >= 1 -> ausserhalb der Insel
+    return outer <= 1 && inner >= 1;
+  }
+
+  // Winkel um Mittelpunkt -> 0..1 Fortschritt (gegen Uhrzeigersinn)
+  function progress(x, y) {
+    const a = Math.atan2(y - track.cy, x - track.cx); // -PI..PI
+    // Startlinie auf der rechten Mitte (angle = 0), Fahrtrichtung nach oben (-y) = gegen den Uhrzeigersinn.
+    let t = -a / (Math.PI * 2);
+    if (t < 0) t += 1;
+    return t;
+  }
+
+  // Item-Boxen entlang der Strecke
+  const itemBoxes = [];
+  function buildItemBoxes() {
+    itemBoxes.length = 0;
+    const positions = [0.1, 0.3, 0.55, 0.78];
+    for (const p of positions) {
+      const a = -p * Math.PI * 2;
+      const midRx = track.rx - track.width / 2;
+      const midRy = track.ry - track.width / 2;
+      itemBoxes.push({
+        x: track.cx + Math.cos(a) * midRx,
+        y: track.cy + Math.sin(a) * midRy,
+        active: true,
+        respawn: 0,
+      });
+    }
+  }
+
+  // ---------- Karts ----------
+  function makeKart(color, name, isAI) {
+    return {
+      x: 0, y: 0,
+      angle: -Math.PI / 2, // nach oben
+      speed: 0,
+      maxSpeed: 3.2,
+      accel: 0.08,
+      turn: 0.045,
+      color,
+      name,
+      isAI,
+      lap: 1,
+      lastT: 0,
+      laps: 0,        // Anzahl beendeter Runden
+      item: null,
+      itemTimer: 0,
+      boost: 0,
+      stun: 0,
+      finished: false,
+      finishTime: 0,
+      // KI Hilfsdaten
+      aiTarget: 0,
+    };
+  }
+
+  let player, ais, allKarts;
+  let projectiles = []; // Panzer
+  let hazards = [];     // Bananen
+  let startTime = 0;
+  let running = false;
+  let finishedOrder = [];
+
+  function resetRace() {
+    buildItemBoxes();
+    projectiles = [];
+    hazards = [];
+    finishedOrder = [];
+
+    // Startpositionen: rechte Seite, vier nebeneinander auf der Strasse
+    const baseAngle = 0.02 * Math.PI * 2; // leicht hinter Startlinie
+    const a = -baseAngle * Math.PI * 2 / Math.PI / 2; // Winkel
+    const startA = 0.02 * 2 * Math.PI; // gegen Uhrzeigersinn = negativer Winkel
+    const startAngle = -startA;
+
+    player = makeKart('#e53935', 'Du', false);
+    const ai1 = makeKart('#1e88e5', 'Bot Blau', true);
+    const ai2 = makeKart('#43a047', 'Bot Grün', true);
+    const ai3 = makeKart('#fdd835', 'Bot Gelb', true);
+    ais = [ai1, ai2, ai3];
+    allKarts = [player, ...ais];
+
+    // Verteile auf zwei Reihen im Startbereich
+    const midRx = track.rx - track.width / 2;
+    const midRy = track.ry - track.width / 2;
+    for (let i = 0; i < allKarts.length; i++) {
+      const lane = (i % 2 === 0) ? -22 : 22; // links/rechts auf der Strasse
+      const back = Math.floor(i / 2) * 36;
+      const ang = startAngle + back / midRx; // leicht zurück
+      const rxOff = midRx + lane * 0.0; // bleibt auf Mittellinie
+      const k = allKarts[i];
+      const r = midRx + lane;
+      const r2 = midRy + lane * (midRy / midRx);
+      k.x = track.cx + Math.cos(ang) * r;
+      k.y = track.cy + Math.sin(ang) * r2;
+      k.angle = -Math.PI / 2; // nach oben
+      k.lastT = progress(k.x, k.y);
+      k.laps = 0;
+      k.lap = 1;
+      k.speed = 0;
+      k.item = null;
+      k.boost = 0;
+      k.stun = 0;
+      k.finished = false;
+    }
+
+    startTime = performance.now();
+  }
+
+  // ---------- Eingabe ----------
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === ' ') {
+      e.preventDefault();
+      usePlayerItem();
+    }
+  });
+  window.addEventListener('keyup', e => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  function usePlayerItem() {
+    if (!running || !player.item || player.finished) return;
+    fireItem(player);
+  }
+
+  function fireItem(k) {
+    if (!k.item) return;
+    if (k.item === 'mushroom') {
+      k.boost = 90; // frames
+    } else if (k.item === 'banana') {
+      // Hinter dem Kart fallen lassen
+      const bx = k.x - Math.cos(k.angle) * 28;
+      const by = k.y - Math.sin(k.angle) * 28;
+      hazards.push({ x: bx, y: by, life: 60 * 20, owner: k });
+    } else if (k.item === 'shell') {
+      // Vor dem Kart abschiessen
+      const sx = k.x + Math.cos(k.angle) * 24;
+      const sy = k.y + Math.sin(k.angle) * 24;
+      projectiles.push({
+        x: sx, y: sy,
+        vx: Math.cos(k.angle) * 6,
+        vy: Math.sin(k.angle) * 6,
+        life: 180,
+        owner: k,
+      });
+    }
+    k.item = null;
+  }
+
+  function giveRandomItem(k) {
+    const r = Math.random();
+    if (r < 0.4) k.item = 'mushroom';
+    else if (r < 0.75) k.item = 'banana';
+    else k.item = 'shell';
+  }
+
+  // ---------- Update ----------
+  function updateKart(k, dt) {
+    if (k.finished) {
+      k.speed *= 0.95;
+    } else if (k.stun > 0) {
+      k.stun--;
+      k.speed *= 0.9;
+    } else {
+      let throttle = 0, steer = 0;
+      if (k.isAI) {
+        // Fahre Richtung Mittellinie etwas voraus
+        const lookAhead = 0.04;
+        const t = k.lastT + lookAhead;
+        const a = -t * Math.PI * 2;
+        const midRx = track.rx - track.width / 2;
+        const midRy = track.ry - track.width / 2;
+        const tx = track.cx + Math.cos(a) * midRx;
+        const ty = track.cy + Math.sin(a) * midRy;
+        const dx = tx - k.x;
+        const dy = ty - k.y;
+        const desired = Math.atan2(dy, dx);
+        let diff = desired - k.angle;
+        while (diff > Math.PI) diff -= 2 * Math.PI;
+        while (diff < -Math.PI) diff += 2 * Math.PI;
+        steer = Math.max(-1, Math.min(1, diff / 0.2));
+        throttle = 1;
+
+        // gelegentlich Item benutzen
+        if (k.item && Math.random() < 0.005) fireItem(k);
+      } else {
+        if (keys['arrowup'] || keys['w']) throttle = 1;
+        if (keys['arrowdown'] || keys['s']) throttle = -0.6;
+        if (keys['arrowleft'] || keys['a']) steer = -1;
+        if (keys['arrowright'] || keys['d']) steer = 1;
+      }
+
+      // Beschleunigung
+      const maxS = k.maxSpeed * (k.boost > 0 ? 1.7 : 1);
+      if (throttle > 0) {
+        k.speed += k.accel * throttle;
+      } else if (throttle < 0) {
+        k.speed += k.accel * throttle * 0.6;
+      } else {
+        k.speed *= 0.97;
+      }
+      if (k.speed > maxS) k.speed = maxS;
+      if (k.speed < -1.5) k.speed = -1.5;
+
+      // Lenken (mehr bei höherer Geschwindigkeit, aber begrenzt)
+      const turnAmt = k.turn * (Math.abs(k.speed) / k.maxSpeed) * Math.sign(k.speed || 1);
+      k.angle += steer * (k.turn * 0.6 + turnAmt);
+    }
+
+    if (k.boost > 0) k.boost--;
+
+    // Bewege & kollidiere mit Strecke
+    const nx = k.x + Math.cos(k.angle) * k.speed;
+    const ny = k.y + Math.sin(k.angle) * k.speed;
+    if (onTrack(nx, ny)) {
+      k.x = nx;
+      k.y = ny;
+    } else if (onTrack(nx, k.y)) {
+      k.x = nx;
+      k.speed *= 0.6;
+    } else if (onTrack(k.x, ny)) {
+      k.y = ny;
+      k.speed *= 0.6;
+    } else {
+      // Ins Gras: stark abbremsen
+      k.speed *= 0.5;
+      // Etwas zurück Richtung Strecke schieben
+      const dxC = track.cx - k.x;
+      const dyC = track.cy - k.y;
+      const len = Math.hypot(dxC, dyC) || 1;
+      // Entscheide ob innen oder aussen
+      const dxN = (k.x - track.cx) / track.rx;
+      const dyN = (k.y - track.cy) / track.ry;
+      const outside = (dxN * dxN + dyN * dyN) > 1;
+      const sign = outside ? 1 : -1;
+      k.x += (dxC / len) * sign * 0.5;
+      k.y += (dyC / len) * sign * 0.5;
+    }
+
+    // Rundenfortschritt
+    const t = progress(k.x, k.y);
+    if (k.lastT > 0.85 && t < 0.15) {
+      k.laps++;
+      k.lap = Math.min(3, k.laps + 1);
+      if (k.laps >= 3 && !k.finished) {
+        k.finished = true;
+        k.finishTime = (performance.now() - startTime) / 1000;
+        finishedOrder.push(k);
+      }
+    } else if (k.lastT < 0.15 && t > 0.85) {
+      // rückwärts über Linie -> ignorieren
+    }
+    k.lastT = t;
+
+    // Item-Boxen
+    for (const b of itemBoxes) {
+      if (!b.active) {
+        b.respawn--;
+        if (b.respawn <= 0) b.active = true;
+        continue;
+      }
+      const dx = b.x - k.x, dy = b.y - k.y;
+      if (dx * dx + dy * dy < 22 * 22) {
+        b.active = false;
+        b.respawn = 60 * 4;
+        if (!k.item) giveRandomItem(k);
+      }
+    }
+
+    // Bananen
+    for (const h of hazards) {
+      if (h.life <= 0) continue;
+      const dx = h.x - k.x, dy = h.y - k.y;
+      if (dx * dx + dy * dy < 16 * 16) {
+        h.life = 0;
+        k.stun = 30;
+        k.speed = 0;
+        k.angle += (Math.random() - 0.5) * 0.6;
+      }
+    }
+  }
+
+  function updateProjectiles() {
+    for (const p of projectiles) {
+      if (p.life <= 0) continue;
+      p.life--;
+      p.x += p.vx;
+      p.y += p.vy;
+      // Vom Strassenrand abprallen
+      if (!onTrack(p.x, p.y)) {
+        // Versuche jeweils Achse
+        if (onTrack(p.x - p.vx, p.y)) { p.vy = -p.vy; p.y += p.vy; }
+        else if (onTrack(p.x, p.y - p.vy)) { p.vx = -p.vx; p.x += p.vx; }
+        else { p.life = 0; }
+      }
+      // Treffer
+      for (const k of allKarts) {
+        if (k === p.owner) continue;
+        const dx = k.x - p.x, dy = k.y - p.y;
+        if (dx * dx + dy * dy < 18 * 18) {
+          k.stun = 45;
+          k.speed = 0;
+          p.life = 0;
+          break;
+        }
+      }
+    }
+    projectiles = projectiles.filter(p => p.life > 0);
+    hazards = hazards.filter(h => h.life > 0);
+    for (const h of hazards) h.life--;
+  }
+
+  // ---------- Zeichnen ----------
+  function drawTrack() {
+    // Grasshintergrund
+    ctx.fillStyle = '#4caf50';
+    ctx.fillRect(0, 0, W, H);
+
+    // Aussen-Ellipse (Strasse)
+    ctx.fillStyle = '#555';
+    ctx.beginPath();
+    ctx.ellipse(track.cx, track.cy, track.rx, track.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Innen-Insel
+    ctx.fillStyle = '#4caf50';
+    ctx.beginPath();
+    ctx.ellipse(track.cx, track.cy, track.rx - track.width, track.ry - track.width, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Mittelstreifen
+    ctx.save();
+    ctx.strokeStyle = '#ffeb3b';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([12, 16]);
+    ctx.beginPath();
+    ctx.ellipse(track.cx, track.cy, track.rx - track.width / 2, track.ry - track.width / 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    // Startlinie (rechts)
+    const midRx = track.rx - track.width / 2;
+    const midRy = track.ry - track.width / 2;
+    const innerRx = track.rx - track.width;
+    const innerRy = track.ry - track.width;
+    ctx.save();
+    ctx.translate(track.cx, track.cy);
+    ctx.fillStyle = '#fff';
+    const segs = 6;
+    for (let i = 0; i < segs; i++) {
+      const t1 = i / segs;
+      const t2 = (i + 0.5) / segs;
+      const r1x = innerRx + (track.rx - innerRx) * t1;
+      const r1y = innerRy + (track.ry - innerRy) * t1;
+      const r2x = innerRx + (track.rx - innerRx) * t2;
+      const r2y = innerRy + (track.ry - innerRy) * t2;
+      ctx.fillRect(r1x, -3, r2x - r1x, 6);
+    }
+    ctx.restore();
+  }
+
+  function drawItemBoxes() {
+    for (const b of itemBoxes) {
+      if (!b.active) continue;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate((performance.now() / 400) % (Math.PI * 2));
+      ctx.fillStyle = '#ff9800';
+      ctx.fillRect(-10, -10, 20, 20);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('?', 0, 1);
+      ctx.restore();
+    }
+  }
+
+  function drawKart(k) {
+    ctx.save();
+    ctx.translate(k.x, k.y);
+    ctx.rotate(k.angle);
+    // Schatten
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(-12, -8, 24, 18);
+    // Körper
+    ctx.fillStyle = k.color;
+    ctx.fillRect(-12, -9, 24, 18);
+    // Front
+    ctx.fillStyle = '#222';
+    ctx.fillRect(8, -7, 5, 14);
+    // Fenster
+    ctx.fillStyle = '#90caf9';
+    ctx.fillRect(-2, -6, 8, 12);
+    // Räder
+    ctx.fillStyle = '#000';
+    ctx.fillRect(-12, -11, 6, 3);
+    ctx.fillRect(-12, 8, 6, 3);
+    ctx.fillRect(6, -11, 6, 3);
+    ctx.fillRect(6, 8, 6, 3);
+
+    if (k.boost > 0) {
+      ctx.fillStyle = '#ffeb3b';
+      ctx.beginPath();
+      ctx.moveTo(-12, -5);
+      ctx.lineTo(-22 - Math.random() * 6, 0);
+      ctx.lineTo(-12, 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (k.stun > 0) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('★', 0, -14);
+    }
+    ctx.restore();
+  }
+
+  function drawHazards() {
+    for (const h of hazards) {
+      ctx.fillStyle = '#ffeb3b';
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#827717';
+      ctx.beginPath();
+      ctx.arc(h.x - 2, h.y - 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawProjectiles() {
+    for (const p of projectiles) {
+      ctx.fillStyle = '#2e7d32';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#a5d6a7';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function updateHUD() {
+    lapEl.textContent = Math.min(3, player.lap);
+
+    const ranking = [...allKarts].sort((a, b) => {
+      if (a.finished && b.finished) return a.finishTime - b.finishTime;
+      if (a.finished) return -1;
+      if (b.finished) return 1;
+      const ap = a.laps + a.lastT;
+      const bp = b.laps + b.lastT;
+      return bp - ap;
+    });
+    posEl.textContent = (ranking.indexOf(player) + 1);
+
+    const elapsed = (performance.now() - startTime) / 1000;
+    timeEl.textContent = elapsed.toFixed(1);
+
+    const icons = { mushroom: '🍄', banana: '🍌', shell: '🐢' };
+    itemEl.textContent = player.item ? icons[player.item] : '–';
+  }
+
+  function allFinished() {
+    return allKarts.every(k => k.finished);
+  }
+
+  function showResults() {
+    running = false;
+    const ranking = [...allKarts].sort((a, b) => a.finishTime - b.finishTime);
+    let html = '<h1>Ergebnis</h1><p style="font-size:20px;line-height:1.8">';
+    ranking.forEach((k, i) => {
+      const me = (k === player) ? ' (Du)' : '';
+      html += `${i + 1}. <b style="color:${k.color}">${k.name}</b>${me} – ${k.finishTime.toFixed(2)}s<br>`;
+    });
+    html += '</p><button id="startBtn">Nochmal</button>';
+    overlay.innerHTML = html;
+    overlay.classList.remove('hidden');
+    document.getElementById('startBtn').onclick = startGame;
+  }
+
+  // ---------- Hauptschleife ----------
+  function loop() {
+    if (running) {
+      for (const k of allKarts) updateKart(k, 1);
+      updateProjectiles();
+
+      drawTrack();
+      drawItemBoxes();
+      drawHazards();
+      drawProjectiles();
+      for (const k of allKarts) drawKart(k);
+      updateHUD();
+
+      if (allFinished()) {
+        showResults();
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  function startGame() {
+    resetRace();
+    overlay.classList.add('hidden');
+    running = true;
+  }
+
+  startBtn.onclick = startGame;
+
+  // Erstes Frame zeichnen
+  drawTrack();
+  drawItemBoxes();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
