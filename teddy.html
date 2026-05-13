@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Naja Teddy</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: linear-gradient(180deg, #ffd9b3 0%, #ffb088 100%);
+    color: #4a2c1a;
+    font-family: system-ui, "Segoe UI", sans-serif;
+  }
+  #app {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+  h1 {
+    text-align: center;
+    margin: 8px 0 12px;
+    font-size: 28px;
+    color: #5d3a1f;
+  }
+  #stage {
+    background: #fff4e6;
+    border-radius: 24px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+    padding: 16px;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: radial-gradient(circle at 50% 40%, #fff7ec 0%, #f4dcc1 100%);
+    border-radius: 16px;
+  }
+  #status {
+    margin-top: 14px;
+    text-align: center;
+    font-size: 18px;
+    min-height: 26px;
+    font-weight: 600;
+    color: #5d3a1f;
+  }
+  #stats {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 14px;
+  }
+  .stat {
+    background: #fff;
+    padding: 8px 10px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+  }
+  .stat .label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+    color: #6b4226;
+  }
+  .bar {
+    height: 8px;
+    background: #f0d7bd;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .bar > div {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease, background 0.4s ease;
+  }
+  #actions {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  button {
+    padding: 12px 4px;
+    border: none;
+    border-radius: 12px;
+    background: #8b5a2b;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 3px 0 #5d3a1f;
+    transition: transform 0.05s ease, box-shadow 0.05s ease;
+  }
+  button:hover { background: #a06a35; }
+  button:active {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 #5d3a1f;
+  }
+  button .icon { display: block; font-size: 22px; margin-bottom: 2px; }
+  #reset {
+    margin-top: 12px;
+    background: #c97b63;
+    box-shadow: 0 3px 0 #8b4a35;
+    width: 100%;
+  }
+  #reset:hover { background: #d68a72; }
+  .age {
+    text-align: center;
+    font-size: 13px;
+    color: #6b4226;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>Naja Teddy</h1>
+  <div id="stage">
+    <canvas id="teddy" width="320" height="320"></canvas>
+    <div id="status">Hallo!</div>
+    <div class="age">Alter: <span id="age">0</span> min</div>
+
+    <div id="stats">
+      <div class="stat">
+        <div class="label"><span>🍯 Hunger</span><span id="vHunger">100</span></div>
+        <div class="bar"><div id="bHunger"></div></div>
+      </div>
+      <div class="stat">
+        <div class="label"><span>😊 Laune</span><span id="vHappy">100</span></div>
+        <div class="bar"><div id="bHappy"></div></div>
+      </div>
+      <div class="stat">
+        <div class="label"><span>💤 Energie</span><span id="vEnergy">100</span></div>
+        <div class="bar"><div id="bEnergy"></div></div>
+      </div>
+      <div class="stat">
+        <div class="label"><span>🛁 Sauber</span><span id="vClean">100</span></div>
+        <div class="bar"><div id="bClean"></div></div>
+      </div>
+    </div>
+
+    <div id="actions">
+      <button data-act="feed"><span class="icon">🍯</span>Füttern</button>
+      <button data-act="play"><span class="icon">🎈</span>Spielen</button>
+      <button data-act="sleep"><span class="icon">💤</span>Schlafen</button>
+      <button data-act="wash"><span class="icon">🛁</span>Baden</button>
+    </div>
+    <button id="reset">Neu anfangen</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('teddy');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  const STORAGE_KEY = 'najaTeddy_v1';
+
+  // ---------- Zustand ----------
+  const defaults = () => ({
+    hunger: 100,
+    happy: 100,
+    energy: 100,
+    clean: 100,
+    sleeping: false,
+    bornAt: Date.now(),
+    lastTick: Date.now(),
+    dead: false,
+    mood: 'happy', // happy, hungry, sad, dirty, tired, sleeping, dead
+  });
+
+  let state = load() || defaults();
+
+  function load() {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (!s) return null;
+      const parsed = JSON.parse(s);
+      // Beim Laden: vergangene Zeit mit-rechnen
+      return parsed;
+    } catch (e) { return null; }
+  }
+  function save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  // ---------- Tick: Bedürfnisse sinken ----------
+  function tick() {
+    if (state.dead) return;
+    const now = Date.now();
+    const elapsed = (now - state.lastTick) / 1000; // Sekunden
+    state.lastTick = now;
+
+    // Bedürfnisse pro Sekunde verlieren (langsam)
+    const hungerRate = 0.6;
+    const happyRate = 0.45;
+    const energyRate = state.sleeping ? -2.5 : 0.5; // Schlaf: Energie steigt
+    const cleanRate = 0.3;
+
+    state.hunger = clamp(state.hunger - hungerRate * elapsed);
+    state.happy  = clamp(state.happy  - happyRate * elapsed);
+    state.energy = clamp(state.energy - energyRate * elapsed);
+    state.clean  = clamp(state.clean  - cleanRate  * elapsed);
+
+    // Schlaf endet wenn voll
+    if (state.sleeping && state.energy >= 99.5) {
+      state.sleeping = false;
+    }
+
+    // Stimmung bestimmen
+    state.mood = decideMood();
+
+    // Tod prüfen (nur wenn alles sehr lange ignoriert wurde)
+    if (state.hunger <= 0 && state.happy <= 0) {
+      state.dead = true;
+      state.mood = 'dead';
+    }
+
+    save();
+  }
+
+  function clamp(v) { return Math.max(0, Math.min(100, v)); }
+
+  function decideMood() {
+    if (state.dead) return 'dead';
+    if (state.sleeping) return 'sleeping';
+    if (state.hunger < 25) return 'hungry';
+    if (state.clean  < 25) return 'dirty';
+    if (state.energy < 20) return 'tired';
+    if (state.happy  < 30) return 'sad';
+    return 'happy';
+  }
+
+  function statusText() {
+    switch (state.mood) {
+      case 'happy':    return 'Mir geht es super!';
+      case 'hungry':   return 'Ich habe Hunger…';
+      case 'sad':      return 'Mir ist langweilig…';
+      case 'dirty':    return 'Ich brauche ein Bad!';
+      case 'tired':    return 'Ich bin müüüde…';
+      case 'sleeping': return 'Zzz…';
+      case 'dead':     return '💔 Dein Teddy ist eingeschlafen für immer.';
+    }
+  }
+
+  // ---------- Aktionen ----------
+  document.querySelectorAll('#actions button').forEach(btn => {
+    btn.onclick = () => {
+      if (state.dead) return;
+      if (state.sleeping && btn.dataset.act !== 'sleep') {
+        // Aufwecken durch andere Aktion
+        state.sleeping = false;
+        state.happy = clamp(state.happy - 10);
+      }
+      doAction(btn.dataset.act);
+    };
+  });
+
+  function doAction(act) {
+    if (act === 'feed') {
+      state.hunger = clamp(state.hunger + 28);
+      state.clean = clamp(state.clean - 4);
+      bounce();
+    } else if (act === 'play') {
+      if (state.energy < 15) {
+        flash('Zu müde zum Spielen!');
+        return;
+      }
+      state.happy = clamp(state.happy + 25);
+      state.energy = clamp(state.energy - 12);
+      state.hunger = clamp(state.hunger - 6);
+      bounce();
+    } else if (act === 'sleep') {
+      state.sleeping = !state.sleeping;
+    } else if (act === 'wash') {
+      state.clean = 100;
+      state.happy = clamp(state.happy + 4);
+      bounce();
+    }
+    save();
+    render();
+  }
+
+  let bounceT = 0;
+  function bounce() { bounceT = 1; }
+
+  let flashMsg = null, flashT = 0;
+  function flash(msg) {
+    flashMsg = msg;
+    flashT = 60;
+  }
+
+  document.getElementById('reset').onclick = () => {
+    if (confirm('Wirklich neu anfangen?')) {
+      state = defaults();
+      save();
+      render();
+    }
+  };
+
+  // ---------- Zeichnen ----------
+  function drawTeddy() {
+    ctx.clearRect(0, 0, W, H);
+
+    const cx = W / 2;
+    let cy = H / 2 + 20;
+
+    // Sanftes Schaukeln
+    const t = performance.now() / 1000;
+    const sway = Math.sin(t * 1.4) * 4;
+    const breathe = Math.sin(t * 2) * 1.5;
+    const jump = bounceT > 0 ? Math.sin((1 - bounceT) * Math.PI) * 14 : 0;
+    if (bounceT > 0) bounceT = Math.max(0, bounceT - 0.04);
+
+    cy -= jump;
+
+    const fur = state.dead ? '#9e8a76'
+              : state.clean < 30 ? '#7a5a3a'
+              : '#c98a4a';
+    const furDark = state.dead ? '#7c6d5d'
+                  : state.clean < 30 ? '#5b3f24'
+                  : '#a06a30';
+    const belly = state.dead ? '#bfb1a1' : '#f3d6ad';
+
+    ctx.save();
+    ctx.translate(cx + sway, cy);
+
+    // ---- Beine ----
+    ctx.fillStyle = fur;
+    drawEllipse(-26, 70, 26, 22);
+    drawEllipse(26, 70, 26, 22);
+    ctx.fillStyle = belly;
+    drawEllipse(-26, 74, 12, 10);
+    drawEllipse(26, 74, 12, 10);
+
+    // ---- Arme ----
+    ctx.fillStyle = fur;
+    const armSwing = state.sleeping ? 0 : Math.sin(t * 2) * 3;
+    drawEllipse(-58, 20 + armSwing, 18, 30);
+    drawEllipse( 58, 20 - armSwing, 18, 30);
+
+    // ---- Bauch ----
+    ctx.fillStyle = fur;
+    drawEllipse(0, 30, 56, 60);
+    ctx.fillStyle = belly;
+    drawEllipse(0, 38, 38, 44);
+
+    // Schmutz-Flecken wenn dreckig
+    if (state.clean < 50 && !state.dead) {
+      ctx.fillStyle = 'rgba(80,50,20,0.45)';
+      drawEllipse(-20, 50, 8, 5);
+      drawEllipse(15, 30, 6, 4);
+      if (state.clean < 25) drawEllipse(-30, 20, 7, 5);
+    }
+
+    // ---- Kopf ----
+    const headY = -40 + breathe;
+    // Ohren
+    ctx.fillStyle = fur;
+    drawCircle(-36, headY - 30, 16);
+    drawCircle( 36, headY - 30, 16);
+    ctx.fillStyle = furDark;
+    drawCircle(-36, headY - 30, 9);
+    drawCircle( 36, headY - 30, 9);
+
+    // Kopf
+    ctx.fillStyle = fur;
+    drawCircle(0, headY, 50);
+
+    // Schnauze
+    ctx.fillStyle = belly;
+    drawEllipse(0, headY + 12, 26, 18);
+
+    // Nase
+    ctx.fillStyle = '#3b2412';
+    drawEllipse(0, headY + 4, 7, 5);
+    // Mund
+    ctx.strokeStyle = '#3b2412';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (state.mood === 'happy') {
+      ctx.arc(0, headY + 16, 8, 0, Math.PI, false);
+    } else if (state.mood === 'sad' || state.mood === 'hungry' || state.mood === 'dirty' || state.mood === 'dead') {
+      ctx.arc(0, headY + 24, 8, Math.PI, 2 * Math.PI, false);
+    } else if (state.mood === 'tired' || state.mood === 'sleeping') {
+      ctx.moveTo(-6, headY + 18);
+      ctx.lineTo(6, headY + 18);
+    } else {
+      ctx.moveTo(-6, headY + 18);
+      ctx.lineTo(6, headY + 18);
+    }
+    ctx.stroke();
+
+    // Augen
+    const eyeY = headY - 8;
+    if (state.mood === 'sleeping' || state.mood === 'dead') {
+      ctx.strokeStyle = '#3b2412';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-22, eyeY); ctx.lineTo(-10, eyeY);
+      ctx.moveTo( 10, eyeY); ctx.lineTo( 22, eyeY);
+      if (state.mood === 'dead') {
+        ctx.moveTo(-22, eyeY - 5); ctx.lineTo(-10, eyeY + 5);
+        ctx.moveTo(-22, eyeY + 5); ctx.lineTo(-10, eyeY - 5);
+        ctx.moveTo( 10, eyeY - 5); ctx.lineTo( 22, eyeY + 5);
+        ctx.moveTo( 10, eyeY + 5); ctx.lineTo( 22, eyeY - 5);
+      }
+      ctx.stroke();
+    } else {
+      // Blinzeln gelegentlich
+      const blink = (Math.floor(t * 0.6) % 7 === 0) && (t % 1 < 0.15);
+      ctx.fillStyle = '#3b2412';
+      if (blink) {
+        ctx.fillRect(-20, eyeY - 1, 10, 2);
+        ctx.fillRect( 10, eyeY - 1, 10, 2);
+      } else {
+        drawCircle(-15, eyeY, 5);
+        drawCircle( 15, eyeY, 5);
+        ctx.fillStyle = '#fff';
+        drawCircle(-13, eyeY - 2, 2);
+        drawCircle( 17, eyeY - 2, 2);
+      }
+    }
+
+    // Wangen bei guter Laune
+    if (state.mood === 'happy') {
+      ctx.fillStyle = 'rgba(231, 110, 110, 0.55)';
+      drawCircle(-26, headY + 8, 6);
+      drawCircle( 26, headY + 8, 6);
+    }
+    // Tränen bei traurig
+    if (state.mood === 'sad' || state.mood === 'hungry') {
+      ctx.fillStyle = '#7ec1ff';
+      drawEllipse(-18, headY + 4, 3, 6);
+    }
+
+    // Schleife am Hals
+    ctx.fillStyle = '#e63946';
+    ctx.beginPath();
+    ctx.moveTo(-14, headY + 40); ctx.lineTo(-22, headY + 32); ctx.lineTo(-22, headY + 48); ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(14, headY + 40); ctx.lineTo(22, headY + 32); ctx.lineTo(22, headY + 48); ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, headY + 40, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // Zzz beim Schlafen
+    if (state.sleeping) {
+      ctx.fillStyle = '#5d3a1f';
+      ctx.font = 'bold 22px sans-serif';
+      const zt = (t * 0.6) % 1;
+      ctx.globalAlpha = 1 - zt;
+      ctx.fillText('z', cx + 45, cy - 90 - zt * 20);
+      ctx.fillText('Z', cx + 60, cy - 110 - zt * 30);
+      ctx.fillText('Z', cx + 75, cy - 130 - zt * 40);
+      ctx.globalAlpha = 1;
+    }
+
+    // Aktions-Icon kurz einblenden via flash
+    if (flashT > 0) {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(0, H - 36, W, 26);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(flashMsg, W / 2, H - 18);
+      ctx.textAlign = 'start';
+      flashT--;
+    }
+  }
+
+  function drawCircle(x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  function drawEllipse(x, y, rx, ry) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ---------- HUD ----------
+  function render() {
+    document.getElementById('status').textContent = statusText();
+    const age = Math.floor((Date.now() - state.bornAt) / 60000);
+    document.getElementById('age').textContent = age;
+
+    setBar('Hunger', state.hunger);
+    setBar('Happy',  state.happy);
+    setBar('Energy', state.energy);
+    setBar('Clean',  state.clean);
+  }
+
+  function setBar(key, val) {
+    document.getElementById('v' + key).textContent = Math.round(val);
+    const bar = document.getElementById('b' + key);
+    bar.style.width = val + '%';
+    let color = '#7ac74f';
+    if (val < 30) color = '#e76e6e';
+    else if (val < 60) color = '#f0a23b';
+    bar.style.background = color;
+  }
+
+  // ---------- Schleife ----------
+  function loop() {
+    tick();
+    render();
+    drawTeddy();
+    requestAnimationFrame(loop);
+  }
+
+  // Beim ersten Aufruf: lastTick auf jetzt setzen, damit nicht ewig Zeit „nachgerechnet" wird
+  if (Date.now() - state.lastTick > 60 * 60 * 1000) {
+    state.lastTick = Date.now() - 60 * 60 * 1000; // max 1h aufholen
+  }
+
+  save();
+  loop();
+})();
+</script>
+</body>
+</html>
