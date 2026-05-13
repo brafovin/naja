@@ -20,6 +20,7 @@ type Round = {
 	collected: number,
 	timeLeft: number,
 	teddy: Model?,
+	alive: { [Player]: boolean },
 }
 
 local round: Round = {
@@ -27,7 +28,10 @@ local round: Round = {
 	collected = 0,
 	timeLeft = Config.IntermissionSeconds,
 	teddy = nil,
+	alive = {},
 }
+
+Players.CharacterAutoLoads = false
 
 local function getMap(): Model
 	local map = Workspace:FindFirstChild("Map")
@@ -121,6 +125,14 @@ local function closeExit()
 	door.CanCollide = true
 end
 
+local function countAlive(): number
+	local n = 0
+	for _, v in round.alive do
+		if v then n += 1 end
+	end
+	return n
+end
+
 local function endRound(victory: boolean, message: string)
 	if round.state == "Ending" then return end
 	round.state = "Ending"
@@ -135,9 +147,16 @@ local function endRound(victory: boolean, message: string)
 	broadcastStatus()
 
 	for _, player in Players:GetPlayers() do
-		if player.Character then
-			player:LoadCharacter()
-		end
+		round.alive[player] = nil
+		player:LoadCharacter()
+	end
+end
+
+local function onPlayerDied(player: Player)
+	if round.state ~= "Playing" then return end
+	round.alive[player] = false
+	if countAlive() == 0 then
+		endRound(false, "Alle wurden gefangen!")
 	end
 end
 
@@ -145,11 +164,13 @@ local function startRound()
 	round.state = "Playing"
 	round.collected = 0
 	round.timeLeft = Config.RoundSeconds
+	round.alive = {}
 	closeExit()
 	spawnItems()
 	broadcastStatus()
 
 	for _, player in Players:GetPlayers() do
+		round.alive[player] = true
 		player:LoadCharacter()
 	end
 
@@ -165,10 +186,30 @@ local function startRound()
 		teddy.Parent = Workspace
 		round.teddy = teddy
 		TeddyAI.start(teddy, function(victim)
-			endRound(false, victim.Name .. " wurde gefangen!")
+			onPlayerDied(victim)
 		end)
 	end)
 end
+
+-- Spieler tritt bei: außerhalb der Runde respawnen, sonst Spectator bis Rundenende
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function(char)
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Died:Connect(function() onPlayerDied(player) end)
+		end
+	end)
+	if round.state ~= "Playing" then
+		player:LoadCharacter()
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	round.alive[player] = nil
+	if round.state == "Playing" and countAlive() == 0 and next(round.alive) == nil then
+		endRound(false, "Alle Spieler verlassen.")
+	end
+end)
 
 -- Item aufgehoben: gilt für jeden Spieler, kooperatives Sammeln
 local function onPromptTriggered(prompt: ProximityPrompt, player: Player)

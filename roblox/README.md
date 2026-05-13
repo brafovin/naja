@@ -14,55 +14,42 @@ alle Schlüssel und flieht durch die Tür, bevor euch der Teddy erwischt.
 
 ## Setup in Roblox Studio
 
-### 1. Map bauen
+**Gute Nachricht:** Map, Teddy-Rig und Horror-Atmosphäre werden zur Laufzeit
+automatisch erzeugt. Du musst nur die Skripte einfügen und kannst sofort spielen.
+Eigene Map / eigenen Rig nutzen? Einfach manuell in Workspace bzw. ServerStorage
+ablegen – die Auto-Builder sehen das und überspringen die Erstellung.
 
-Erstelle im `Workspace` ein **Model** mit dem Namen `Map` und füge hinein:
-
-| Objekt                | Typ      | Zweck                                    |
-|-----------------------|----------|------------------------------------------|
-| `ItemSpawns` (Ordner) | `Folder` | Enthält BaseParts als Schlüssel-Spawns   |
-| `TeddySpawn`          | `Part`   | Hier spawnt der Teddy                    |
-| `ExitDoor`            | `Part`   | Die Fluchttür (Anchored, CanCollide=on)  |
-
-Tipp: Baue einen dunklen Raum mit Wänden, einigen Hindernissen und Räumen,
-zwischen denen die Schlüssel verteilt werden. 8–15 Spawn-Punkte sind ideal.
-
-### 2. Teddy-Rig erstellen
-
-1. In Studio: **Avatar → Rig Builder → R15 Block Rig** einfügen
-2. Den Rig in `ServerStorage` verschieben und in `Teddy` umbenennen
-3. Optional: Parts dunkel einfärben, Gesicht mit Decal auftragen
-4. Wichtig: Rig braucht `Humanoid` und `HumanoidRootPart` (kommt vom Rig Builder)
-5. Setze `Humanoid.AutoRotate = true` und gib ihm `HumanoidStateType.Running`
-
-### 3. Skripte einfügen
+### Skripte einfügen
 
 Kopiere die Dateien aus `src/` in die folgenden Studio-Services. Achte auf
 den **Typ** (Script / LocalScript / ModuleScript) – das ergibt sich aus dem
 Dateinamen:
 
-| Datei                                | Ziel in Studio              | Typ           |
-|--------------------------------------|-----------------------------|---------------|
-| `ReplicatedStorage/GameConfig.luau`        | `ReplicatedStorage`     | ModuleScript  |
-| `ReplicatedStorage/Remotes.server.luau`    | `ServerScriptService`*  | Script        |
-| `ServerScriptService/GameManager.server.luau` | `ServerScriptService` | Script        |
-| `ServerScriptService/TeddyAI.luau`         | `ServerScriptService`   | ModuleScript  |
-| `StarterPlayerScripts/HUD.client.luau`     | `StarterPlayerScripts`  | LocalScript   |
-| `StarterPlayerScripts/Jumpscare.client.luau` | `StarterPlayerScripts` | LocalScript   |
+| Datei                                              | Ziel in Studio          | Typ           |
+|----------------------------------------------------|-------------------------|---------------|
+| `ReplicatedStorage/GameConfig.luau`                | `ReplicatedStorage`     | ModuleScript  |
+| `ReplicatedStorage/Remotes.server.luau`            | `ServerScriptService`*  | Script        |
+| `ServerScriptService/MapBuilder.server.luau`       | `ServerScriptService`   | Script        |
+| `ServerScriptService/TeddyBuilder.server.luau`     | `ServerScriptService`   | Script        |
+| `ServerScriptService/Atmosphere.server.luau`       | `ServerScriptService`   | Script        |
+| `ServerScriptService/GameManager.server.luau`      | `ServerScriptService`   | Script        |
+| `ServerScriptService/TeddyAI.luau`                 | `ServerScriptService`   | ModuleScript  |
+| `StarterPlayerScripts/HUD.client.luau`             | `StarterPlayerScripts`  | LocalScript   |
+| `StarterPlayerScripts/Jumpscare.client.luau`       | `StarterPlayerScripts`  | LocalScript   |
+| `StarterPlayerScripts/Flashlight.client.luau`      | `StarterPlayerScripts`  | LocalScript   |
 
 \* `Remotes.server.luau` erstellt zur Laufzeit den `Remotes`-Ordner in
-`ReplicatedStorage`. Es muss vor den anderen Skripten laufen – einfachster
-Weg: in `ServerScriptService` ablegen.
+`ReplicatedStorage`. Einfachster Weg: in `ServerScriptService` ablegen.
 
-### 4. Lighting & Atmosphäre (optional, aber empfohlen)
+### Features
 
-Damit es sich nach Horror anfühlt, in `Lighting` einstellen:
-
-- `Ambient` = (20, 20, 25)
-- `OutdoorAmbient` = (10, 10, 15)
-- `ClockTime` = 0 (Nacht)
-- `FogEnd` = 60, `FogColor` = (10, 10, 12)
-- Füge ein `Atmosphere` und/oder `ColorCorrectionEffect` (Saturation = -0.4) hinzu
+- **Auto-Map:** dunkler Labyrinth-Raum mit Spawn-Punkten, Teddy-Spawn und Exit
+- **Auto-Teddy:** schwarze Rig mit glühenden roten Augen + Schritt-Sound
+- **Horror-Lighting:** Nacht, Nebel, Sättigung runter, Bloom, Atmosphäre
+- **Taschenlampe:** `F` zum Togglen
+- **Spectator-Modus:** wer stirbt, bleibt tot bis die Runde endet
+- **Jumpscare:** roter Vollbild-Flash + Kamera-Shake
+- **HUD:** Timer + Schlüsselzähler oben am Bildschirm
 
 ## Tuning
 
