@@ -2,12 +2,12 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8" />
-<title>Teddy Chase</title>
+<title>Teddy – Kinderzimmer</title>
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    background: #0d0a14;
+    background: #1a0f1e;
     color: #fff;
     font-family: system-ui, "Segoe UI", sans-serif;
     overflow: hidden;
@@ -23,33 +23,34 @@
     justify-content: center;
   }
   canvas {
-    background: #1a1825;
-    box-shadow: 0 0 40px rgba(0,0,0,0.7);
+    background: #2a1f33;
+    box-shadow: 0 0 40px rgba(0,0,0,0.8);
     max-width: 100%;
     max-height: 100%;
     cursor: crosshair;
   }
   #hud {
     position: fixed;
-    top: 12px;
+    top: 10px;
     left: 50%;
     transform: translateX(-50%);
     font-weight: 800;
     text-shadow: 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000;
     pointer-events: none;
     text-align: center;
-    font-size: 20px;
+    font-size: 18px;
+    line-height: 1.4;
   }
-  #hud .small { font-size: 13px; opacity: 0.9; font-weight: 600; }
+  #hud .small { font-size: 12px; opacity: 0.9; font-weight: 600; }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <canvas id="game" width="960" height="600"></canvas>
+  <canvas id="game" width="1000" height="640"></canvas>
 </div>
 <div id="hud">
-  <div>⏱ <span id="time">0.0</span>s &nbsp; 🍯 <span id="honey">0</span></div>
-  <div class="small">Teddys: <span id="teddyCount">1</span> &nbsp; Best: <span id="best">0</span></div>
+  <div>⭐ <span id="stars">0</span> / 5 &nbsp; 👫 <span id="friends">3</span> &nbsp; ⏱ <span id="time">0.0</span>s</div>
+  <div class="small">Best: <span id="best">–</span></div>
 </div>
 
 <script>
@@ -58,565 +59,912 @@
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
 
-  const timeEl   = document.getElementById('time');
-  const honeyEl  = document.getElementById('honey');
-  const teddyCEl = document.getElementById('teddyCount');
-  const bestEl   = document.getElementById('best');
+  const starsEl   = document.getElementById('stars');
+  const friendsEl = document.getElementById('friends');
+  const timeEl    = document.getElementById('time');
+  const bestEl    = document.getElementById('best');
 
-  const BEST_KEY = 'teddyChase_best_v1';
-  let best = parseFloat(localStorage.getItem(BEST_KEY) || '0');
-  bestEl.textContent = best.toFixed(1);
+  const BEST_KEY = 'teddyRoom_best_v1';
+  const bestStored = localStorage.getItem(BEST_KEY);
+  let best = bestStored ? parseFloat(bestStored) : null;
+  bestEl.textContent = best ? best.toFixed(1) + 's' : '–';
 
-  // ---------- Map ----------
-  // Einfache Wände als Rechtecke für eine Karte mit ein paar Räumen
-  const walls = [
+  // ---------- Möbel / Wände ----------
+  // Kinderzimmer mit Bett, Kommode, Spielzeugkiste, Bücherregal, Lampe, Teppich
+  const furniture = [
     // Außenwände
-    { x: 0,   y: 0,   w: W, h: 20 },
-    { x: 0,   y: H-20, w: W, h: 20 },
-    { x: 0,   y: 0,   w: 20, h: H },
-    { x: W-20, y: 0,  w: 20, h: H },
-    // Innenwände
-    { x: 150, y: 80,  w: 20, h: 180 },
-    { x: 150, y: 80,  w: 200, h: 20 },
-    { x: 280, y: 200, w: 200, h: 20 },
+    { type: 'wall', x: 0,    y: 0,    w: W,  h: 24 },
+    { type: 'wall', x: 0,    y: H-24, w: W,  h: 24 },
+    { type: 'wall', x: 0,    y: 0,    w: 24, h: H },
+    { type: 'wall', x: W-24, y: 0,    w: 24, h: H },
 
-    { x: 600, y: 100, w: 20, h: 220 },
-    { x: 600, y: 100, w: 180, h: 20 },
-    { x: 760, y: 200, w: 20, h: 120 },
-
-    { x: 100, y: 380, w: 240, h: 20 },
-    { x: 320, y: 380, w: 20, h: 140 },
-
-    { x: 500, y: 420, w: 180, h: 20 },
-    { x: 660, y: 420, w: 20, h: 140 },
-
-    { x: 420, y: 280, w: 80, h: 20 },
-    { x: 420, y: 280, w: 20, h: 80 },
+    // Bett oben links
+    { type: 'bed',  x: 60,   y: 60,  w: 200, h: 140 },
+    // Kommode oben mitte
+    { type: 'dresser', x: 320, y: 60, w: 180, h: 70 },
+    // Bücherregal oben rechts
+    { type: 'shelf', x: 560, y: 60, w: 200, h: 60 },
+    // Schreibtisch rechts
+    { type: 'desk', x: 820, y: 120, w: 140, h: 200 },
+    // Spielzeugkiste unten links
+    { type: 'chest', x: 60, y: 460, w: 160, h: 90 },
+    // Teppich (kein Hindernis, nur Deko)
+    // Sofa unten mitte
+    { type: 'sofa', x: 360, y: 480, w: 240, h: 90 },
+    // Lampe unten rechts
+    { type: 'lamp', x: 720, y: 480, w: 60, h: 60 },
+    // Klötze in der Mitte (Hindernis-Inseln)
+    { type: 'blocks', x: 380, y: 280, w: 60, h: 60 },
+    { type: 'blocks', x: 540, y: 320, w: 60, h: 60 },
   ];
 
-  function rectOverlap(a, b) {
-    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  function isBlocker(f) {
+    return f.type !== 'rug';
   }
-  function circleHitsWall(cx, cy, r) {
-    for (const w of walls) {
-      const nx = Math.max(w.x, Math.min(cx, w.x + w.w));
-      const ny = Math.max(w.y, Math.min(cy, w.y + w.h));
+
+  function circleHits(cx, cy, r) {
+    for (const f of furniture) {
+      if (!isBlocker(f)) continue;
+      const nx = Math.max(f.x, Math.min(cx, f.x + f.w));
+      const ny = Math.max(f.y, Math.min(cy, f.y + f.h));
       const dx = cx - nx, dy = cy - ny;
-      if (dx * dx + dy * dy < r * r) return w;
+      if (dx * dx + dy * dy < r * r) return f;
     }
     return null;
   }
 
   function moveCircle(obj, dx, dy, r) {
-    // Versucht X und Y getrennt -> rutscht an Wänden entlang
-    if (!circleHitsWall(obj.x + dx, obj.y, r)) obj.x += dx;
-    if (!circleHitsWall(obj.x, obj.y + dy, r)) obj.y += dy;
+    if (!circleHits(obj.x + dx, obj.y, r)) obj.x += dx;
+    if (!circleHits(obj.x, obj.y + dy, r)) obj.y += dy;
   }
 
-  // Sichtlinie zwischen zwei Punkten (kein Wand-Block)
-  function hasLineOfSight(x1, y1, x2, y2) {
+  function lineOfSight(x1, y1, x2, y2) {
     const dx = x2 - x1, dy = y2 - y1;
     const dist = Math.hypot(dx, dy);
-    const steps = Math.ceil(dist / 8);
+    const steps = Math.ceil(dist / 10);
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
       const x = x1 + dx * t;
       const y = y1 + dy * t;
-      for (const w of walls) {
-        if (x >= w.x && x <= w.x + w.w && y >= w.y && y <= w.y + w.h) return false;
+      for (const f of furniture) {
+        if (!isBlocker(f)) continue;
+        if (x >= f.x && x <= f.x + f.w && y >= f.y && y <= f.y + f.h) return false;
       }
     }
     return true;
   }
 
-  // ---------- Game State ----------
-  let player, teddies, honeys, particles;
-  let running = false;
-  let dead = false;
-  let won = false;
-  let elapsed = 0;
-  let lastT = 0;
-  let teddySpawnTimer = 0;
-
-  const PLAYER_R = 14;
-  const TEDDY_R  = 18;
-
-  function safeSpawn(r, minDistFromPlayer = 0) {
-    for (let i = 0; i < 200; i++) {
-      const x = 40 + Math.random() * (W - 80);
-      const y = 40 + Math.random() * (H - 80);
-      if (circleHitsWall(x, y, r + 2)) continue;
-      if (minDistFromPlayer > 0 && player) {
-        const dx = x - player.x, dy = y - player.y;
-        if (dx * dx + dy * dy < minDistFromPlayer * minDistFromPlayer) continue;
+  function safeSpawn(r, awayFrom, minDist) {
+    for (let i = 0; i < 300; i++) {
+      const x = 50 + Math.random() * (W - 100);
+      const y = 50 + Math.random() * (H - 100);
+      if (circleHits(x, y, r + 4)) continue;
+      if (awayFrom) {
+        const dx = x - awayFrom.x, dy = y - awayFrom.y;
+        if (dx * dx + dy * dy < minDist * minDist) continue;
       }
       return { x, y };
     }
     return { x: W / 2, y: H / 2 };
   }
 
-  function reset() {
-    player = { x: W / 2, y: H - 80, vx: 0, vy: 0, angle: 0, walkT: 0 };
-    teddies = [];
-    honeys = [];
-    particles = [];
-    elapsed = 0;
-    teddySpawnTimer = 0;
-    spawnTeddy();
-    // Honig-Gläser verstreuen
-    for (let i = 0; i < 8; i++) {
-      const p = safeSpawn(12, 80);
-      honeys.push({ x: p.x, y: p.y, wob: Math.random() * Math.PI * 2 });
-    }
-    running = true;
-    dead = false;
-    won = false;
-    lastT = performance.now();
+  // ---------- Game State ----------
+  const PR = 13;   // Spieler-Radius
+  const FR = 13;   // Freund-Radius
+  const TR = 22;   // Teddy-Radius
+  const MR = 13;   // Mini-Teddy-Radius
+  const STAR_R = 14;
+
+  let player, friends, teddy, miniTeddies, stars, particles;
+  let running = false;
+  let gameOver = false;
+  let won = false;
+  let elapsed = 0;
+  let lastT = 0;
+  let messageT = 0;
+  let messageText = '';
+
+  function showMessage(t) {
+    messageText = t;
+    messageT = 2.5;
   }
 
-  function spawnTeddy() {
-    const p = safeSpawn(TEDDY_R, 280);
-    teddies.push({
-      x: p.x, y: p.y,
-      vx: 0, vy: 0,
-      angle: 0,
-      walkT: 0,
-      seeT: 0,         // wie lange Spieler schon gesehen
-      lastSeenX: 0,
-      lastSeenY: 0,
-      hasTarget: false,
-      growl: 0,
-    });
+  function reset() {
+    player = {
+      x: 480, y: 320,
+      angle: 0, walkT: 0,
+      color: '#ffeb3b', shirt: '#4caf50',
+      name: 'Du', alive: true,
+    };
+    friends = [];
+    const friendColors = [
+      { shirt: '#2196f3', hair: '#3b2412', name: 'Mia'  },
+      { shirt: '#e91e63', hair: '#d4a373', name: 'Tim'  },
+      { shirt: '#9c27b0', hair: '#222',    name: 'Lea'  },
+    ];
+    for (let i = 0; i < 3; i++) {
+      const sp = safeSpawn(FR, player, 80);
+      friends.push({
+        x: sp.x, y: sp.y, angle: 0, walkT: 0, alive: true,
+        shirt: friendColors[i].shirt,
+        hair: friendColors[i].hair,
+        name: friendColors[i].name,
+        targetStar: null,
+        fleeT: 0,
+      });
+    }
+    // Teddy spawnt weit weg
+    const tp = safeSpawn(TR, player, 280);
+    teddy = {
+      x: tp.x, y: tp.y,
+      angle: 0, walkT: 0,
+      seeT: 0,
+      target: null,
+      lastSeen: null,
+      patrolTarget: null,
+      roar: 0,
+    };
+    miniTeddies = [];
+    stars = [];
+    for (let i = 0; i < 5; i++) {
+      const sp = safeSpawn(STAR_R, player, 120);
+      stars.push({ x: sp.x, y: sp.y, wob: Math.random() * Math.PI * 2, taken: false });
+    }
+    particles = [];
+    elapsed = 0;
+    running = true;
+    gameOver = false;
+    won = false;
+    lastT = performance.now();
+    showMessage('Sammelt zusammen 5 ⭐ – flieht vor dem Teddy!');
   }
 
   // ---------- Input ----------
   const keys = {};
   window.addEventListener('keydown', e => {
     keys[e.key.toLowerCase()] = true;
-    if (!running && (e.key === ' ' || e.key === 'Enter')) {
-      reset();
-    }
+    if (!running && (e.key === ' ' || e.key === 'Enter')) reset();
   });
-  window.addEventListener('keyup', e => {
-    keys[e.key.toLowerCase()] = false;
-  });
-  canvas.addEventListener('mousedown', () => {
-    if (!running) reset();
-  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+  canvas.addEventListener('mousedown', () => { if (!running) reset(); });
 
   // ---------- Update ----------
   function update(dt) {
-    if (!running || dead) return;
+    if (!running || gameOver) return;
     elapsed += dt;
+    if (messageT > 0) messageT -= dt;
 
-    // Spieler bewegen
-    let ax = 0, ay = 0;
-    if (keys['arrowup']    || keys['w']) ay -= 1;
-    if (keys['arrowdown']  || keys['s']) ay += 1;
-    if (keys['arrowleft']  || keys['a']) ax -= 1;
-    if (keys['arrowright'] || keys['d']) ax += 1;
-    const mag = Math.hypot(ax, ay);
-    if (mag > 0) {
-      ax /= mag; ay /= mag;
-      player.angle = Math.atan2(ay, ax);
-      player.walkT += dt * 8;
+    // ---- Spieler ----
+    if (player.alive) {
+      let ax = 0, ay = 0;
+      if (keys['arrowup']    || keys['w']) ay -= 1;
+      if (keys['arrowdown']  || keys['s']) ay += 1;
+      if (keys['arrowleft']  || keys['a']) ax -= 1;
+      if (keys['arrowright'] || keys['d']) ax += 1;
+      const m = Math.hypot(ax, ay);
+      if (m > 0) {
+        ax /= m; ay /= m;
+        player.angle = Math.atan2(ay, ax);
+        player.walkT += dt * 9;
+      }
+      moveCircle(player, ax * 220 * dt, ay * 220 * dt, PR);
     }
-    const PLAYER_SPEED = 230; // px/s
-    moveCircle(player, ax * PLAYER_SPEED * dt, ay * PLAYER_SPEED * dt, PLAYER_R);
 
-    // Honig einsammeln
-    for (let i = honeys.length - 1; i >= 0; i--) {
-      const h = honeys[i];
-      h.wob += dt * 4;
-      const dx = h.x - player.x, dy = h.y - player.y;
-      if (dx * dx + dy * dy < (PLAYER_R + 12) * (PLAYER_R + 12)) {
-        honeys.splice(i, 1);
-        for (let k = 0; k < 8; k++) {
-          const a = Math.random() * Math.PI * 2;
-          particles.push({
-            x: h.x, y: h.y,
-            vx: Math.cos(a) * 80, vy: Math.sin(a) * 80,
-            life: 0.5, maxLife: 0.5,
-            r: 2 + Math.random() * 2,
-            c: '#ffc107',
-          });
+    // ---- Sterne einsammeln (Spieler + Freunde) ----
+    const kidsAll = [player, ...friends.filter(f => f.alive)];
+    for (const k of kidsAll) {
+      if (!k.alive) continue;
+      for (const s of stars) {
+        if (s.taken) continue;
+        const dx = s.x - k.x, dy = s.y - k.y;
+        if (dx * dx + dy * dy < (STAR_R + 12) ** 2) {
+          s.taken = true;
+          burst(s.x, s.y, '#ffeb3b', 10);
+          showMessage(k === player ? 'Du hast einen Stern! ⭐' : (k.name + ' hat einen Stern! ⭐'));
         }
       }
     }
+    stars = stars.filter(s => !s.taken);
+    starsEl.textContent = 5 - stars.length;
+    friendsEl.textContent = friends.filter(f => f.alive).length;
+    timeEl.textContent = elapsed.toFixed(1);
 
-    // Wenn alle Honiggläser eingesammelt -> Sieg!
-    if (honeys.length === 0) {
+    if (stars.length === 0) {
       won = true;
-      dead = true;
+      gameOver = true;
       running = false;
       saveBest();
       return;
     }
 
-    // Neue Teddys spawnen alle 25 Sekunden, max 5
-    teddySpawnTimer += dt;
-    if (teddySpawnTimer > 25 && teddies.length < 5) {
-      spawnTeddy();
-      teddySpawnTimer = 0;
-    }
+    // ---- KI-Freunde ----
+    for (const f of friends) {
+      if (!f.alive) continue;
+      // Distanz zum Teddy
+      const tdx = teddy.x - f.x, tdy = teddy.y - f.y;
+      const tdist = Math.hypot(tdx, tdy);
 
-    // Teddys updaten
-    for (const t of teddies) {
-      const dx = player.x - t.x, dy = player.y - t.y;
-      const dist = Math.hypot(dx, dy);
-      const sees = hasLineOfSight(t.x, t.y, player.x, player.y) && dist < 360;
+      let goalX, goalY, fleeing = false;
 
-      // Teddy-Geschwindigkeit: leicht langsamer als Spieler, steigt mit Zeit
-      const baseSpeed = 140;
-      const speed = baseSpeed + Math.min(60, elapsed * 0.8);
+      // Auch Mini-Teddys werden gefürchtet
+      let nearestThreat = { x: teddy.x, y: teddy.y, d: tdist };
+      for (const m of miniTeddies) {
+        const d = Math.hypot(m.x - f.x, m.y - f.y);
+        if (d < nearestThreat.d) nearestThreat = { x: m.x, y: m.y, d };
+      }
 
-      let tx, ty;
-      if (sees) {
-        t.seeT += dt;
-        t.lastSeenX = player.x;
-        t.lastSeenY = player.y;
-        t.hasTarget = true;
-        tx = player.x;
-        ty = player.y;
-        t.growl = Math.max(t.growl, 1);
+      if (nearestThreat.d < 160) {
+        fleeing = true;
+        f.fleeT = 1;
+        // Vom Teddy wegrennen
+        const fx = f.x - nearestThreat.x;
+        const fy = f.y - nearestThreat.y;
+        const mm = Math.hypot(fx, fy) || 1;
+        goalX = f.x + (fx / mm) * 100;
+        goalY = f.y + (fy / mm) * 100;
       } else {
-        t.seeT = Math.max(0, t.seeT - dt);
-        if (t.hasTarget) {
-          tx = t.lastSeenX;
-          ty = t.lastSeenY;
-          const ddx = tx - t.x, ddy = ty - t.y;
-          if (Math.hypot(ddx, ddy) < 8) {
-            t.hasTarget = false;
+        // Nächsten Stern als Ziel
+        if (!f.targetStar || f.targetStar.taken) {
+          let best = null, bd = Infinity;
+          for (const s of stars) {
+            const d = Math.hypot(s.x - f.x, s.y - f.y);
+            if (d < bd) { bd = d; best = s; }
           }
+          f.targetStar = best;
+        }
+        if (f.targetStar) {
+          goalX = f.targetStar.x;
+          goalY = f.targetStar.y;
         } else {
-          // Patrouille: langsames Wandern
-          if (!t.patrolX || Math.hypot(t.patrolX - t.x, t.patrolY - t.y) < 20) {
-            const p = safeSpawn(TEDDY_R);
-            t.patrolX = p.x;
-            t.patrolY = p.y;
-          }
-          tx = t.patrolX;
-          ty = t.patrolY;
+          goalX = f.x;
+          goalY = f.y;
         }
       }
 
-      const ddx = tx - t.x, ddy = ty - t.y;
-      const dd = Math.hypot(ddx, ddy);
-      let nx = 0, ny = 0;
-      if (dd > 0.5) {
-        nx = ddx / dd;
-        ny = ddy / dd;
+      const ddx = goalX - f.x, ddy = goalY - f.y;
+      const ml = Math.hypot(ddx, ddy);
+      if (ml > 1) {
+        const nx = ddx / ml, ny = ddy / ml;
+        f.angle = Math.atan2(ny, nx);
+        f.walkT += dt * 8;
+        const sp = fleeing ? 200 : 130;
+        moveCircle(f, nx * sp * dt, ny * sp * dt, FR);
       }
-      const moveSpeed = t.hasTarget ? speed : speed * 0.45;
-      moveCircle(t, nx * moveSpeed * dt, ny * moveSpeed * dt, TEDDY_R);
-      if (Math.abs(nx) + Math.abs(ny) > 0.1) {
-        t.angle = Math.atan2(ny, nx);
-        t.walkT += dt * 6;
-      }
-      if (t.growl > 0) t.growl -= dt;
 
-      // Treffer?
-      const phx = player.x - t.x, phy = player.y - t.y;
-      if (phx * phx + phy * phy < (PLAYER_R + TEDDY_R - 4) ** 2) {
-        die();
-        return;
+      // Treffer durch Teddy
+      if (tdist < TR + FR - 4) {
+        catchFriend(f);
+      }
+      for (const m of miniTeddies) {
+        const d = Math.hypot(m.x - f.x, m.y - f.y);
+        if (d < MR + FR - 3) catchFriend(f);
+      }
+    }
+
+    // ---- Großer Teddy ----
+    {
+      // Suche sichtbares Ziel: nächstes Kind in Reichweite
+      let target = null, td = Infinity;
+      for (const k of kidsAll) {
+        if (!k.alive) continue;
+        if (!lineOfSight(teddy.x, teddy.y, k.x, k.y)) continue;
+        const d = Math.hypot(k.x - teddy.x, k.y - teddy.y);
+        if (d < 380 && d < td) { target = k; td = d; }
+      }
+
+      if (target) {
+        teddy.seeT = Math.min(2, teddy.seeT + dt);
+        teddy.target = target;
+        teddy.lastSeen = { x: target.x, y: target.y };
+        if (teddy.roar < 0.01) {
+          burst(teddy.x, teddy.y - 18, '#ff1744', 6);
+          teddy.roar = 1;
+        }
+      } else {
+        teddy.seeT = Math.max(0, teddy.seeT - dt * 0.5);
+      }
+
+      let tx, ty;
+      if (teddy.lastSeen) {
+        tx = teddy.lastSeen.x;
+        ty = teddy.lastSeen.y;
+        if (Math.hypot(tx - teddy.x, ty - teddy.y) < 12 && !target) {
+          teddy.lastSeen = null;
+        }
+      } else {
+        if (!teddy.patrolTarget || Math.hypot(teddy.patrolTarget.x - teddy.x, teddy.patrolTarget.y - teddy.y) < 20) {
+          teddy.patrolTarget = safeSpawn(TR);
+        }
+        tx = teddy.patrolTarget.x;
+        ty = teddy.patrolTarget.y;
+      }
+
+      const ddx = tx - teddy.x, ddy = ty - teddy.y;
+      const ml = Math.hypot(ddx, ddy);
+      if (ml > 0.5) {
+        const nx = ddx / ml, ny = ddy / ml;
+        teddy.angle = Math.atan2(ny, nx);
+        teddy.walkT += dt * 5;
+        const sp = target ? (180 + Math.min(50, elapsed * 0.5)) : 90;
+        moveCircle(teddy, nx * sp * dt, ny * sp * dt, TR);
+      }
+      if (teddy.roar > 0) teddy.roar -= dt;
+
+      // Spielertreffer
+      if (player.alive) {
+        const d = Math.hypot(player.x - teddy.x, player.y - teddy.y);
+        if (d < TR + PR - 4) {
+          catchPlayer();
+        }
+      }
+    }
+
+    // ---- Mini-Teddys (gefangene Freunde) ----
+    for (const m of miniTeddies) {
+      let target = null, td = Infinity;
+      for (const k of kidsAll) {
+        if (!k.alive) continue;
+        if (!lineOfSight(m.x, m.y, k.x, k.y)) continue;
+        const d = Math.hypot(k.x - m.x, k.y - m.y);
+        if (d < 280 && d < td) { target = k; td = d; }
+      }
+      let tx, ty;
+      if (target) {
+        tx = target.x; ty = target.y;
+        m.lastSeen = { x: tx, y: ty };
+      } else if (m.lastSeen) {
+        tx = m.lastSeen.x; ty = m.lastSeen.y;
+        if (Math.hypot(tx - m.x, ty - m.y) < 10) m.lastSeen = null;
+      } else {
+        if (!m.patrol || Math.hypot(m.patrol.x - m.x, m.patrol.y - m.y) < 16) {
+          m.patrol = safeSpawn(MR);
+        }
+        tx = m.patrol.x; ty = m.patrol.y;
+      }
+      const ddx = tx - m.x, ddy = ty - m.y;
+      const ml = Math.hypot(ddx, ddy);
+      if (ml > 0.5) {
+        const nx = ddx / ml, ny = ddy / ml;
+        m.angle = Math.atan2(ny, nx);
+        m.walkT += dt * 7;
+        const sp = target ? 150 : 80;
+        moveCircle(m, nx * sp * dt, ny * sp * dt, MR);
+      }
+      if (player.alive) {
+        const d = Math.hypot(player.x - m.x, player.y - m.y);
+        if (d < MR + PR - 3) catchPlayer();
       }
     }
 
     // Partikel
     for (const p of particles) {
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.vx *= 0.92;
-      p.vy *= 0.92;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vx *= 0.9; p.vy *= 0.9;
       p.life -= dt;
     }
     particles = particles.filter(p => p.life > 0);
-
-    timeEl.textContent = elapsed.toFixed(1);
-    honeyEl.textContent = 8 - honeys.length;
-    teddyCEl.textContent = teddies.length;
   }
 
-  function die() {
-    dead = true;
+  function catchFriend(f) {
+    if (!f.alive) return;
+    f.alive = false;
+    burst(f.x, f.y, '#7a5a3a', 14);
+    miniTeddies.push({ x: f.x, y: f.y, angle: 0, walkT: 0, lastSeen: null });
+    showMessage(f.name + ' wurde verwandelt! 🐻');
+  }
+
+  function catchPlayer() {
+    if (!player.alive) return;
+    player.alive = false;
+    gameOver = true;
     running = false;
+    burst(player.x, player.y, '#e63946', 22);
     saveBest();
-    // Sturzpartikel
-    for (let i = 0; i < 20; i++) {
-      const a = Math.random() * Math.PI * 2;
-      particles.push({
-        x: player.x, y: player.y,
-        vx: Math.cos(a) * 150, vy: Math.sin(a) * 150,
-        life: 1, maxLife: 1,
-        r: 3 + Math.random() * 2,
-        c: '#e63946',
-      });
-    }
   }
 
   function saveBest() {
-    if (elapsed > best) {
+    if (best === null || elapsed > best) {
       best = elapsed;
       localStorage.setItem(BEST_KEY, String(best));
-      bestEl.textContent = best.toFixed(1);
+      bestEl.textContent = best.toFixed(1) + 's';
+    }
+  }
+
+  function burst(x, y, c, n) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 60 + Math.random() * 90;
+      particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 0.6, maxLife: 0.6,
+        r: 2 + Math.random() * 2,
+        c,
+      });
     }
   }
 
   // ---------- Zeichnen ----------
   function drawFloor() {
-    ctx.fillStyle = '#1a1825';
+    // Holzdielen
+    ctx.fillStyle = '#6d4c2a';
     ctx.fillRect(0, 0, W, H);
-    // Holzboden-Linien
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
     ctx.lineWidth = 1;
-    for (let x = 0; x < W; x += 40) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0); ctx.lineTo(x, H);
-      ctx.stroke();
-    }
-    for (let y = 0; y < H; y += 40) {
+    for (let y = 0; y < H; y += 36) {
       ctx.beginPath();
       ctx.moveTo(0, y); ctx.lineTo(W, y);
       ctx.stroke();
     }
+    for (let x = 0; x < W; x += 90) {
+      const off = ((x / 90) % 2) * 45;
+      for (let y = off; y < H; y += 90) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+        ctx.beginPath();
+        ctx.moveTo(x, y); ctx.lineTo(x, y + 36);
+        ctx.stroke();
+      }
+    }
+
+    // Teppich in der Mitte
+    ctx.save();
+    ctx.translate(W / 2, H / 2 - 20);
+    ctx.fillStyle = '#c62828';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 220, 130, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e57373';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 180, 100, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c62828';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 60, 35, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawWalls() {
-    for (const w of walls) {
-      ctx.fillStyle = '#3a2e4a';
-      ctx.fillRect(w.x, w.y, w.w, w.h);
-      ctx.fillStyle = '#52406a';
-      ctx.fillRect(w.x, w.y, w.w, 3);
-      ctx.fillStyle = '#231a30';
-      ctx.fillRect(w.x, w.y + w.h - 3, w.w, 3);
+    // Wandhintergrund (oben, Streifen-Tapete)
+    ctx.fillStyle = '#7e57c2';
+    ctx.fillRect(0, 0, W, 24);
+    ctx.fillRect(0, 0, 24, H);
+    ctx.fillRect(W - 24, 0, 24, H);
+    ctx.fillRect(0, H - 24, W, 24);
+    ctx.fillStyle = '#9575cd';
+    for (let x = 0; x < W; x += 16) {
+      ctx.fillRect(x, 0, 4, 24);
+      ctx.fillRect(x, H - 24, 4, 24);
+    }
+    for (let y = 0; y < H; y += 16) {
+      ctx.fillRect(0, y, 24, 4);
+      ctx.fillRect(W - 24, y, 24, 4);
     }
   }
 
-  function drawHoneys() {
-    for (const h of honeys) {
-      const wob = Math.sin(h.wob) * 2;
+  function drawFurniture() {
+    for (const f of furniture) {
+      if (f.type === 'wall') continue;
       ctx.save();
-      ctx.translate(h.x, h.y + wob);
-      // Glow
-      const g = ctx.createRadialGradient(0, 0, 4, 0, 0, 24);
-      g.addColorStop(0, 'rgba(255, 200, 80, 0.5)');
-      g.addColorStop(1, 'rgba(255, 200, 80, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(0, 0, 24, 0, Math.PI * 2);
-      ctx.fill();
-      // Glas
-      ctx.fillStyle = '#ffb300';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 10, 11, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffd54f';
-      ctx.beginPath();
-      ctx.ellipse(-3, -3, 3, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // Deckel
-      ctx.fillStyle = '#6b4226';
-      ctx.fillRect(-8, -13, 16, 4);
+      switch (f.type) {
+        case 'bed': {
+          // Bettrahmen
+          ctx.fillStyle = '#6d4c41';
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          // Matratze
+          ctx.fillStyle = '#fff8e1';
+          ctx.fillRect(f.x + 8, f.y + 8, f.w - 16, f.h - 16);
+          // Kissen
+          ctx.fillStyle = '#bbdefb';
+          ctx.fillRect(f.x + 14, f.y + 14, 60, 40);
+          // Decke
+          ctx.fillStyle = '#ec407a';
+          ctx.fillRect(f.x + 14, f.y + 60, f.w - 28, f.h - 74);
+          ctx.fillStyle = '#f48fb1';
+          for (let i = 0; i < 4; i++) {
+            ctx.fillRect(f.x + 14 + i * 40, f.y + 60, 20, f.h - 74);
+          }
+          break;
+        }
+        case 'dresser': {
+          ctx.fillStyle = '#8d6e63';
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.fillStyle = '#a1887f';
+          ctx.fillRect(f.x + 4, f.y + 4, f.w - 8, f.h / 2 - 6);
+          ctx.fillRect(f.x + 4, f.y + f.h / 2 + 2, f.w - 8, f.h / 2 - 6);
+          ctx.fillStyle = '#ffd54f';
+          ctx.beginPath();
+          ctx.arc(f.x + f.w / 2, f.y + f.h / 4, 3, 0, Math.PI * 2);
+          ctx.arc(f.x + f.w / 2, f.y + f.h * 3 / 4, 3, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'shelf': {
+          ctx.fillStyle = '#5d4037';
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          // Bücher
+          const colors = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#8e24aa', '#fb8c00'];
+          let bx = f.x + 6;
+          while (bx < f.x + f.w - 8) {
+            const bw = 10 + Math.floor(Math.random() * 6);
+            ctx.fillStyle = colors[(bx * 7) % colors.length | 0];
+            ctx.fillRect(bx, f.y + 8, bw, f.h - 16);
+            bx += bw + 2;
+          }
+          break;
+        }
+        case 'desk': {
+          ctx.fillStyle = '#a1887f';
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.fillStyle = '#6d4c41';
+          ctx.fillRect(f.x, f.y, f.w, 10);
+          // Buch
+          ctx.fillStyle = '#1e88e5';
+          ctx.fillRect(f.x + 20, f.y + 30, 50, 40);
+          // Lampe
+          ctx.fillStyle = '#fdd835';
+          ctx.beginPath();
+          ctx.arc(f.x + f.w - 40, f.y + 50, 14, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#5d4037';
+          ctx.fillRect(f.x + f.w - 44, f.y + 60, 8, 30);
+          break;
+        }
+        case 'chest': {
+          ctx.fillStyle = '#ff7043';
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.fillStyle = '#bf360c';
+          ctx.fillRect(f.x, f.y, f.w, 16);
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 20px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('SPIELZEUG', f.x + f.w / 2, f.y + 50);
+          ctx.textAlign = 'start';
+          // Spielzeuge oben drauf
+          ctx.fillStyle = '#fdd835';
+          ctx.beginPath();
+          ctx.arc(f.x + 30, f.y - 8, 10, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#e53935';
+          ctx.fillRect(f.x + f.w - 40, f.y - 12, 20, 20);
+          break;
+        }
+        case 'sofa': {
+          ctx.fillStyle = '#3949ab';
+          ctx.fillRect(f.x, f.y, f.w, f.h);
+          ctx.fillStyle = '#5c6bc0';
+          ctx.fillRect(f.x + 8, f.y + 20, f.w - 16, f.h - 28);
+          // Kissen
+          ctx.fillStyle = '#9fa8da';
+          ctx.fillRect(f.x + 14, f.y + 28, 60, 50);
+          ctx.fillRect(f.x + 86, f.y + 28, 60, 50);
+          ctx.fillRect(f.x + 158, f.y + 28, 60, 50);
+          break;
+        }
+        case 'lamp': {
+          ctx.fillStyle = '#5d4037';
+          ctx.fillRect(f.x + f.w / 2 - 4, f.y + 20, 8, f.h - 20);
+          ctx.fillStyle = '#fff59d';
+          ctx.beginPath();
+          ctx.moveTo(f.x + f.w / 2, f.y);
+          ctx.lineTo(f.x + f.w, f.y + 30);
+          ctx.lineTo(f.x, f.y + 30);
+          ctx.closePath();
+          ctx.fill();
+          // Lichtkegel
+          const g = ctx.createRadialGradient(f.x + f.w/2, f.y + 30, 10, f.x + f.w/2, f.y + 30, 120);
+          g.addColorStop(0, 'rgba(255, 240, 150, 0.4)');
+          g.addColorStop(1, 'rgba(255, 240, 150, 0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(f.x + f.w/2, f.y + 30, 120, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'blocks': {
+          const cols = ['#e53935', '#fdd835', '#1e88e5', '#43a047'];
+          for (let i = 0; i < 4; i++) {
+            ctx.fillStyle = cols[i];
+            const bx = f.x + (i % 2) * (f.w / 2);
+            const by = f.y + Math.floor(i / 2) * (f.h / 2);
+            ctx.fillRect(bx, by, f.w / 2 - 2, f.h / 2 - 2);
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('ABCD'[i], bx + f.w / 4, by + f.h / 4 + 6);
+            ctx.textAlign = 'start';
+          }
+          break;
+        }
+      }
       ctx.restore();
     }
   }
 
-  function drawPlayer() {
+  function drawStars() {
+    for (const s of stars) {
+      const wob = Math.sin(s.wob + performance.now() / 300) * 3;
+      ctx.save();
+      ctx.translate(s.x, s.y + wob);
+      const g = ctx.createRadialGradient(0, 0, 5, 0, 0, 28);
+      g.addColorStop(0, 'rgba(255, 235, 59, 0.6)');
+      g.addColorStop(1, 'rgba(255, 235, 59, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(0, 0, 28, 0, Math.PI * 2); ctx.fill();
+      // Stern
+      ctx.fillStyle = '#ffeb3b';
+      ctx.strokeStyle = '#fbc02d';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? 12 : 5;
+        const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+        const x = Math.cos(a) * r, y = Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawKid(k) {
+    if (!k.alive) return;
     ctx.save();
-    ctx.translate(player.x, player.y);
+    ctx.translate(k.x, k.y);
 
     // Schatten
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.beginPath();
-    ctx.ellipse(0, 10, 14, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 12, 12, 4, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.rotate(player.angle + Math.PI / 2);
-
-    const bob = Math.abs(Math.sin(player.walkT)) * 1.5;
+    ctx.rotate(k.angle + Math.PI / 2);
+    const bob = Math.abs(Math.sin(k.walkT)) * 1.5;
     ctx.translate(0, -bob);
+    const legS = Math.sin(k.walkT) * 4;
+    const armS = -Math.sin(k.walkT) * 3;
 
     // Beine
-    const legS = Math.sin(player.walkT) * 4;
-    ctx.fillStyle = '#2c3e50';
-    ctx.fillRect(-7, 6, 5, 10 + legS * 0.3);
-    ctx.fillRect( 2, 6, 5, 10 - legS * 0.3);
+    ctx.fillStyle = '#1565c0';
+    ctx.fillRect(-6, 4, 5, 10 + legS * 0.3);
+    ctx.fillRect( 1, 4, 5, 10 - legS * 0.3);
 
-    // Körper (T-Shirt)
-    ctx.fillStyle = '#4caf50';
+    // Körper
+    ctx.fillStyle = k.shirt;
     ctx.beginPath();
-    ctx.ellipse(0, 0, 11, 13, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, -2, 10, 12, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Arme
-    const armS = -Math.sin(player.walkT) * 3;
     ctx.fillStyle = '#fdd9b5';
     ctx.beginPath();
-    ctx.ellipse(-11, 2 + armS, 4, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(-10, 0 + armS, 4, 6, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse( 11, 2 - armS, 4, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(10, 0 - armS, 4, 6, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Kopf
     ctx.fillStyle = '#fdd9b5';
     ctx.beginPath();
-    ctx.arc(0, -10, 8, 0, Math.PI * 2);
+    ctx.arc(0, -12, 8, 0, Math.PI * 2);
     ctx.fill();
 
     // Haare
-    ctx.fillStyle = '#3b2412';
+    ctx.fillStyle = k.hair || '#3b2412';
     ctx.beginPath();
-    ctx.arc(0, -12, 8, Math.PI, 2 * Math.PI);
+    ctx.arc(0, -14, 8, Math.PI, 2 * Math.PI);
     ctx.fill();
 
-    // Augen
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(-3, -10, 2, 0, Math.PI * 2);
-    ctx.arc( 3, -10, 2, 0, Math.PI * 2);
-    ctx.fill();
+    // Gesicht (immer "nach vorne")
     ctx.fillStyle = '#000';
     ctx.beginPath();
-    ctx.arc(-3, -10, 1, 0, Math.PI * 2);
-    ctx.arc( 3, -10, 1, 0, Math.PI * 2);
+    ctx.arc(-2.5, -12, 1.2, 0, Math.PI * 2);
+    ctx.arc( 2.5, -12, 1.2, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
+
+    // Name
+    if (k !== player) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#000';
+      ctx.strokeText(k.name, k.x, k.y - 26);
+      ctx.fillText(k.name, k.x, k.y - 26);
+      ctx.textAlign = 'start';
+    }
   }
 
-  function drawTeddy(t) {
+  function drawBigTeddy(t) {
     ctx.save();
     ctx.translate(t.x, t.y);
-
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.beginPath();
-    ctx.ellipse(0, 14, 18, 5, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 18, 22, 6, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.rotate(t.angle + Math.PI / 2);
-    const bob = Math.abs(Math.sin(t.walkT)) * 1.8;
+    const bob = Math.abs(Math.sin(t.walkT)) * 2;
     ctx.translate(0, -bob);
+    const legS = Math.sin(t.walkT) * 6;
 
     // Beine
-    const legS = Math.sin(t.walkT) * 5;
-    ctx.fillStyle = '#7a5a3a';
+    ctx.fillStyle = '#5d3a1f';
     ctx.beginPath();
-    ctx.ellipse(-7, 10 + legS * 0.3, 5, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(-9, 12 + legS * 0.3, 6, 9, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse( 7, 10 - legS * 0.3, 5, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Körper (dunkler, gruseliger Teddy)
-    ctx.fillStyle = '#7a5a3a';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 14, 16, 0, 0, Math.PI * 2);
+    ctx.ellipse( 9, 12 - legS * 0.3, 6, 9, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Bauch-Patch
-    ctx.fillStyle = '#a78054';
+    // Körper
+    ctx.fillStyle = '#5d3a1f';
     ctx.beginPath();
-    ctx.ellipse(0, 2, 8, 10, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, 18, 20, 0, 0, Math.PI * 2);
     ctx.fill();
-    // Nähte
-    ctx.strokeStyle = '#3b2412';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([2, 2]);
+    // Patch
+    ctx.fillStyle = '#8b5a2b';
     ctx.beginPath();
-    ctx.moveTo(0, -8); ctx.lineTo(0, 14);
+    ctx.ellipse(0, 3, 11, 13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Naht
+    ctx.strokeStyle = '#2c1810';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(0, -10); ctx.lineTo(0, 18);
     ctx.stroke();
     ctx.setLineDash([]);
 
     // Arme
-    const armS = -Math.sin(t.walkT) * 4;
-    ctx.fillStyle = '#7a5a3a';
+    const armS = -Math.sin(t.walkT) * 5;
+    ctx.fillStyle = '#5d3a1f';
     ctx.beginPath();
-    ctx.ellipse(-14, 0 + armS, 5, 9, 0, 0, Math.PI * 2);
+    ctx.ellipse(-18, 0 + armS, 6, 12, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse( 14, 0 - armS, 5, 9, 0, 0, Math.PI * 2);
+    ctx.ellipse( 18, 0 - armS, 6, 12, 0, 0, Math.PI * 2);
     ctx.fill();
+    // Krallen
+    ctx.fillStyle = '#fff';
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.arc(-18 + i * 3, 10 + armS, 1.5, 0, Math.PI * 2);
+      ctx.arc( 18 + i * 3, 10 - armS, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Kopf
-    ctx.fillStyle = '#7a5a3a';
+    ctx.fillStyle = '#5d3a1f';
     ctx.beginPath();
-    ctx.arc(0, -13, 12, 0, Math.PI * 2);
+    ctx.arc(0, -16, 15, 0, Math.PI * 2);
     ctx.fill();
     // Ohren
     ctx.beginPath();
-    ctx.arc(-9, -20, 5, 0, Math.PI * 2);
-    ctx.arc( 9, -20, 5, 0, Math.PI * 2);
+    ctx.arc(-11, -25, 6, 0, Math.PI * 2);
+    ctx.arc( 11, -25, 6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#5b3f24';
+    ctx.fillStyle = '#3d2310';
     ctx.beginPath();
-    ctx.arc(-9, -20, 2.5, 0, Math.PI * 2);
-    ctx.arc( 9, -20, 2.5, 0, Math.PI * 2);
+    ctx.arc(-11, -25, 3, 0, Math.PI * 2);
+    ctx.arc( 11, -25, 3, 0, Math.PI * 2);
     ctx.fill();
 
     // Schnauze
-    ctx.fillStyle = '#a78054';
+    ctx.fillStyle = '#8b5a2b';
     ctx.beginPath();
-    ctx.ellipse(0, -10, 6, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, -12, 7, 5, 0, 0, Math.PI * 2);
     ctx.fill();
-
     // Nase
     ctx.fillStyle = '#000';
     ctx.beginPath();
-    ctx.ellipse(0, -12, 2, 1.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, -15, 2.5, 1.8, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Gruselige Augen — rot leuchtend wenn Spieler gesehen
-    const seeing = t.seeT > 0;
+    // Augen — leuchtend rot bei Sicht
+    const seeing = t.seeT > 0.05;
     if (seeing) {
-      // Glow
-      const g = ctx.createRadialGradient(-4, -14, 0, -4, -14, 8);
-      g.addColorStop(0, 'rgba(255, 50, 50, 0.8)');
-      g.addColorStop(1, 'rgba(255, 50, 50, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(-4, -14, 8, 0, Math.PI * 2); ctx.fill();
-      const g2 = ctx.createRadialGradient(4, -14, 0, 4, -14, 8);
-      g2.addColorStop(0, 'rgba(255, 50, 50, 0.8)');
-      g2.addColorStop(1, 'rgba(255, 50, 50, 0)');
-      ctx.fillStyle = g2;
-      ctx.beginPath(); ctx.arc(4, -14, 8, 0, Math.PI * 2); ctx.fill();
-
+      for (const ex of [-5, 5]) {
+        const g = ctx.createRadialGradient(ex, -17, 0, ex, -17, 9);
+        g.addColorStop(0, 'rgba(255, 30, 30, 0.9)');
+        g.addColorStop(1, 'rgba(255, 30, 30, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(ex, -17, 9, 0, Math.PI * 2); ctx.fill();
+      }
       ctx.fillStyle = '#ff1744';
     } else {
-      ctx.fillStyle = '#1a1208';
+      ctx.fillStyle = '#0a0a0a';
     }
     ctx.beginPath();
-    ctx.arc(-4, -14, 2, 0, Math.PI * 2);
-    ctx.arc( 4, -14, 2, 0, Math.PI * 2);
+    ctx.arc(-5, -17, 2.5, 0, Math.PI * 2);
+    ctx.arc( 5, -17, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // X über Auge (kaputt)
-    ctx.strokeStyle = '#3b2412';
+    // Naht über Auge
+    ctx.strokeStyle = '#2c1810';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(-6, -16); ctx.lineTo(-2, -12);
-    ctx.moveTo(-6, -12); ctx.lineTo(-2, -16);
+    ctx.moveTo(-8, -20); ctx.lineTo(-2, -14);
+    ctx.moveTo(-8, -14); ctx.lineTo(-2, -20);
     ctx.stroke();
 
-    // Mund — Reißzähne wenn jagend
+    // Mund: Reißzähne wenn sehend
     if (seeing) {
       ctx.fillStyle = '#000';
       ctx.beginPath();
-      ctx.ellipse(0, -8, 4, 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, -9, 5, 2.5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#fff';
       ctx.beginPath();
-      ctx.moveTo(-3, -8); ctx.lineTo(-2, -6); ctx.lineTo(-1, -8); ctx.closePath();
-      ctx.moveTo( 3, -8); ctx.lineTo( 2, -6); ctx.lineTo( 1, -8); ctx.closePath();
+      ctx.moveTo(-4, -10); ctx.lineTo(-3, -7); ctx.lineTo(-2, -10); ctx.closePath();
+      ctx.moveTo( 4, -10); ctx.lineTo( 3, -7); ctx.lineTo( 2, -10); ctx.closePath();
       ctx.fill();
     } else {
-      ctx.strokeStyle = '#3b2412';
+      ctx.strokeStyle = '#2c1810';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(0, -9, 3, Math.PI, 2 * Math.PI);
+      ctx.arc(0, -11, 3, Math.PI, 2 * Math.PI);
       ctx.stroke();
     }
+
+    ctx.restore();
+  }
+
+  function drawMiniTeddy(m) {
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(0, 10, 12, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.rotate(m.angle + Math.PI / 2);
+    const bob = Math.abs(Math.sin(m.walkT)) * 1.2;
+    ctx.translate(0, -bob);
+
+    ctx.fillStyle = '#7a5a3a';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 11, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#a78054';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 6, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#7a5a3a';
+    // Beine
+    const legS = Math.sin(m.walkT) * 3;
+    ctx.beginPath();
+    ctx.ellipse(-5, 9 + legS * 0.3, 3, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse( 5, 9 - legS * 0.3, 3, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Arme
+    ctx.beginPath();
+    ctx.ellipse(-10, 0, 3, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse( 10, 0, 3, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Kopf
+    ctx.beginPath();
+    ctx.arc(0, -10, 9, 0, Math.PI * 2);
+    ctx.fill();
+    // Ohren
+    ctx.beginPath();
+    ctx.arc(-7, -16, 3.5, 0, Math.PI * 2);
+    ctx.arc( 7, -16, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Augen rot
+    ctx.fillStyle = '#ff1744';
+    ctx.beginPath();
+    ctx.arc(-3, -11, 1.4, 0, Math.PI * 2);
+    ctx.arc( 3, -11, 1.4, 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.restore();
   }
@@ -633,58 +981,77 @@
   }
 
   function drawVignette() {
-    const g = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.3, W/2, H/2, Math.max(W,H)*0.7);
+    const g = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.35, W/2, H/2, Math.max(W,H)*0.7);
     g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(1, 'rgba(0,0,0,0.55)');
+    g.addColorStop(1, 'rgba(0,0,0,0.45)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }
 
+  function drawMessage() {
+    if (messageT > 0 && messageText) {
+      ctx.globalAlpha = Math.min(1, messageT);
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      const w = ctx.measureText(messageText).width + 40;
+      ctx.fillRect(W / 2 - w / 2, 60, w, 36);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(messageText, W / 2, 84);
+      ctx.textAlign = 'start';
+      ctx.globalAlpha = 1;
+    }
+  }
+
   function drawOverlay() {
     if (won) {
-      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillStyle = 'rgba(0, 40, 0, 0.65)';
       ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#ffeb3b';
       ctx.textAlign = 'center';
       ctx.font = 'bold 64px sans-serif';
-      ctx.fillText('Geschafft!', W / 2, H / 2 - 40);
+      ctx.fillText('Gewonnen! ⭐', W / 2, H / 2 - 40);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 24px sans-serif';
-      ctx.fillText('Alle 🍯 gesammelt in ' + elapsed.toFixed(1) + 's', W / 2, H / 2 + 10);
+      ctx.fillText('Alle 5 Sterne in ' + elapsed.toFixed(1) + 's', W / 2, H / 2 + 10);
+      ctx.fillText('Freunde überlebt: ' + friends.filter(f => f.alive).length + ' / 3', W / 2, H / 2 + 40);
       ctx.font = '20px sans-serif';
-      ctx.fillText('Klick oder Leertaste = nochmal', W / 2, H / 2 + 60);
+      ctx.fillText('Klick oder Leertaste = nochmal', W / 2, H / 2 + 90);
       ctx.textAlign = 'start';
-    } else if (dead) {
-      ctx.fillStyle = 'rgba(40,0,0,0.65)';
+    } else if (gameOver) {
+      ctx.fillStyle = 'rgba(40, 0, 0, 0.7)';
       ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#e63946';
       ctx.textAlign = 'center';
       ctx.font = 'bold 70px sans-serif';
-      ctx.fillText('Erwischt!', W / 2, H / 2 - 50);
+      ctx.fillText('Erwischt! 🐻', W / 2, H / 2 - 50);
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 26px sans-serif';
-      ctx.fillText('Überlebt: ' + elapsed.toFixed(1) + 's', W / 2, H / 2);
-      ctx.fillText('🍯 gesammelt: ' + (8 - honeys.length) + ' / 8', W / 2, H / 2 + 36);
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText('Überlebt: ' + elapsed.toFixed(1) + 's', W / 2, H / 2 + 0);
+      ctx.fillText('Sterne: ' + (5 - stars.length) + ' / 5', W / 2, H / 2 + 32);
       ctx.font = '20px sans-serif';
       ctx.fillText('Klick oder Leertaste = nochmal', W / 2, H / 2 + 90);
       ctx.textAlign = 'start';
     } else if (!running) {
-      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
       ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#fff';
       ctx.textAlign = 'center';
-      ctx.font = 'bold 64px sans-serif';
-      ctx.fillText('Teddy Chase', W / 2, H / 2 - 60);
-      ctx.font = '20px sans-serif';
-      ctx.fillText('WASD oder Pfeiltasten = Bewegen', W / 2, H / 2 - 10);
-      ctx.fillText('Sammle alle 🍯 Honiggläser', W / 2, H / 2 + 20);
-      ctx.fillText('Renne vor den gruseligen Teddys weg!', W / 2, H / 2 + 50);
-      ctx.fillStyle = '#ff1744';
-      ctx.font = 'bold 16px sans-serif';
-      ctx.fillText('⚠ Rote Augen = er hat dich gesehen', W / 2, H / 2 + 80);
+      ctx.font = 'bold 60px sans-serif';
+      ctx.fillText('Teddy', W / 2, H / 2 - 90);
+      ctx.font = 'bold 22px sans-serif';
       ctx.fillStyle = '#ffeb3b';
-      ctx.font = 'bold 28px sans-serif';
-      ctx.fillText('Klick zum Starten', W / 2, H / 2 + 130);
+      ctx.fillText('Das verfluchte Kinderzimmer', W / 2, H / 2 - 55);
+      ctx.fillStyle = '#fff';
+      ctx.font = '18px sans-serif';
+      ctx.fillText('WASD oder Pfeiltasten = Bewegen', W / 2, H / 2 - 15);
+      ctx.fillText('Sammelt mit euren Freunden 5 ⭐', W / 2, H / 2 + 10);
+      ctx.fillText('Der riesige Teddy jagt euch –', W / 2, H / 2 + 35);
+      ctx.fillStyle = '#ff5252';
+      ctx.fillText('Gefangene Freunde verwandeln sich in Mini-Teddys!', W / 2, H / 2 + 60);
+      ctx.fillStyle = '#ffeb3b';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText('Klick zum Starten', W / 2, H / 2 + 110);
       ctx.textAlign = 'start';
     }
   }
@@ -697,30 +1064,33 @@
     update(dt);
 
     drawFloor();
+    drawFurniture();
     drawWalls();
-    drawHoneys();
-    for (const t of teddies) drawTeddy(t);
-    if (player) drawPlayer();
+    drawStars();
+    // Reihenfolge: erst Mini-Teddys, dann Kinder, dann großer Teddy
+    if (miniTeddies) for (const m of miniTeddies) drawMiniTeddy(m);
+    if (friends) for (const f of friends) drawKid(f);
+    if (player) drawKid(player);
+    if (teddy) drawBigTeddy(teddy);
     drawParticles();
     drawVignette();
+    drawMessage();
     drawOverlay();
 
     requestAnimationFrame(loop);
   }
 
-  // Initiale Anzeige (Startscreen)
+  // Startzustand
   player = null;
-  teddies = [];
-  honeys = [];
+  friends = [];
+  miniTeddies = [];
+  stars = [];
   particles = [];
-  // Demo-Teddy auf Startscreen
-  teddies.push({
-    x: W * 0.7, y: H * 0.4,
-    vx: 0, vy: 0,
-    angle: -Math.PI,
-    walkT: 0, seeT: 0, lastSeenX: 0, lastSeenY: 0,
-    hasTarget: false, growl: 0,
-  });
+  teddy = {
+    x: W * 0.78, y: H * 0.35,
+    angle: -Math.PI, walkT: 0, seeT: 0,
+    target: null, lastSeen: null, patrolTarget: null, roar: 0,
+  };
   requestAnimationFrame(loop);
 })();
 </script>
