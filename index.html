@@ -2,19 +2,20 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8" />
-<title>Naja Kart</title>
+<title>Teddy Run</title>
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    background: #111;
+    background: #1a1208;
     color: #fff;
-    font-family: system-ui, sans-serif;
+    font-family: system-ui, "Segoe UI", sans-serif;
     overflow: hidden;
     height: 100%;
+    user-select: none;
+    -webkit-user-select: none;
   }
   #wrap {
-    position: relative;
     width: 100vw;
     height: 100vh;
     display: flex;
@@ -22,80 +23,34 @@
     justify-content: center;
   }
   canvas {
-    background: #4caf50;
+    background: #87ceeb;
     box-shadow: 0 0 30px rgba(0,0,0,0.6);
+    max-width: 100%;
+    max-height: 100%;
     image-rendering: pixelated;
-  }
-  #hud {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background: rgba(0,0,0,0.55);
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 16px;
-    line-height: 1.4;
-    pointer-events: none;
-  }
-  #hud b { color: #ffeb3b; }
-  #item {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 70px;
-    height: 70px;
-    background: rgba(0,0,0,0.55);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 36px;
-  }
-  #overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,0.75);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 20px;
-  }
-  #overlay h1 { font-size: 48px; margin: 0 0 10px; color: #ffeb3b; }
-  #overlay p { font-size: 18px; max-width: 500px; line-height: 1.5; }
-  #overlay button {
-    margin-top: 20px;
-    padding: 12px 28px;
-    font-size: 20px;
-    background: #ff5722;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
     cursor: pointer;
   }
-  #overlay button:hover { background: #ff7043; }
-  .hidden { display: none !important; }
+  #hud {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 22px;
+    font-weight: 800;
+    text-shadow: 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000;
+    pointer-events: none;
+    text-align: center;
+  }
+  #hud .small { font-size: 14px; opacity: 0.9; font-weight: 600; }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <canvas id="game" width="960" height="640"></canvas>
-  <div id="hud">
-    Runde: <b id="lap">1</b> / 3<br/>
-    Position: <b id="pos">1</b> / 4<br/>
-    Zeit: <b id="time">0.0</b>s
-  </div>
-  <div id="item">–</div>
-  <div id="overlay">
-    <h1>Naja Kart</h1>
-    <p>
-      Pfeiltasten oder WASD zum Fahren.<br/>
-      Leertaste benutzt dein Item (Pilz = Boost, Bananenschale = Falle, Schildkrötenpanzer = Angriff).<br/>
-      Fahre durch die <span style="color:#ff9800">orangen Item-Boxen</span>. 3 Runden, schlag die KI!
-    </p>
-    <button id="startBtn">Start</button>
-  </div>
+  <canvas id="game" width="960" height="540"></canvas>
+</div>
+<div id="hud">
+  <div><span id="score">0</span> m</div>
+  <div class="small">🍯 <span id="honey">0</span> &nbsp; Best: <span id="best">0</span></div>
 </div>
 
 <script>
@@ -103,552 +58,727 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
+  const GROUND_Y = H - 90;
 
-  const lapEl  = document.getElementById('lap');
-  const posEl  = document.getElementById('pos');
-  const timeEl = document.getElementById('time');
-  const itemEl = document.getElementById('item');
-  const overlay = document.getElementById('overlay');
-  const startBtn = document.getElementById('startBtn');
+  const scoreEl = document.getElementById('score');
+  const honeyEl = document.getElementById('honey');
+  const bestEl  = document.getElementById('best');
 
-  // ---------- Strecke ----------
-  // Die Strecke ist ein Oval mit ein paar Wegpunkten für KI und Rundenlogik.
-  // Mittelpunkt, Radien, Strassenbreite.
-  const track = {
-    cx: W / 2,
-    cy: H / 2,
-    rx: 360,
-    ry: 230,
-    width: 110, // Strassenbreite
-  };
+  const BEST_KEY = 'teddyRun_best_v1';
+  let best = parseInt(localStorage.getItem(BEST_KEY) || '0', 10);
+  bestEl.textContent = best;
 
-  // Prüft ob Punkt (x,y) auf der Strasse ist (zwischen innerer und äusserer Ellipse).
-  function onTrack(x, y) {
-    const dx = (x - track.cx) / track.rx;
-    const dy = (y - track.cy) / track.ry;
-    const outer = dx * dx + dy * dy; // <= 1 -> innerhalb äusserer
-    const innerRx = track.rx - track.width;
-    const innerRy = track.ry - track.width;
-    const ix = (x - track.cx) / innerRx;
-    const iy = (y - track.cy) / innerRy;
-    const inner = ix * ix + iy * iy; // >= 1 -> ausserhalb der Insel
-    return outer <= 1 && inner >= 1;
-  }
-
-  // Winkel um Mittelpunkt -> 0..1 Fortschritt (gegen Uhrzeigersinn)
-  function progress(x, y) {
-    const a = Math.atan2(y - track.cy, x - track.cx); // -PI..PI
-    // Startlinie auf der rechten Mitte (angle = 0), Fahrtrichtung nach oben (-y) = gegen den Uhrzeigersinn.
-    let t = -a / (Math.PI * 2);
-    if (t < 0) t += 1;
-    return t;
-  }
-
-  // Item-Boxen entlang der Strecke
-  const itemBoxes = [];
-  function buildItemBoxes() {
-    itemBoxes.length = 0;
-    const positions = [0.1, 0.3, 0.55, 0.78];
-    for (const p of positions) {
-      const a = -p * Math.PI * 2;
-      const midRx = track.rx - track.width / 2;
-      const midRy = track.ry - track.width / 2;
-      itemBoxes.push({
-        x: track.cx + Math.cos(a) * midRx,
-        y: track.cy + Math.sin(a) * midRy,
-        active: true,
-        respawn: 0,
-      });
-    }
-  }
-
-  // ---------- Karts ----------
-  function makeKart(color, name, isAI) {
-    return {
-      x: 0, y: 0,
-      angle: -Math.PI / 2, // nach oben
-      speed: 0,
-      maxSpeed: 3.2,
-      accel: 0.08,
-      turn: 0.045,
-      color,
-      name,
-      isAI,
-      lap: 1,
-      lastT: 0,
-      laps: 0,        // Anzahl beendeter Runden
-      item: null,
-      itemTimer: 0,
-      boost: 0,
-      stun: 0,
-      finished: false,
-      finishTime: 0,
-      // KI Hilfsdaten
-      aiTarget: 0,
-    };
-  }
-
-  let player, ais, allKarts;
-  let projectiles = []; // Panzer
-  let hazards = [];     // Bananen
-  let startTime = 0;
+  // ---------- Game State ----------
+  let state, obstacles, honeys, clouds, bushes, particles;
+  let lastTime = 0;
   let running = false;
-  let finishedOrder = [];
+  let dead = false;
+  let countdown = 0;
 
-  function resetRace() {
-    buildItemBoxes();
-    projectiles = [];
-    hazards = [];
-    finishedOrder = [];
-
-    // Startpositionen: rechte Seite, vier nebeneinander auf der Strasse
-    const baseAngle = 0.02 * Math.PI * 2; // leicht hinter Startlinie
-    const a = -baseAngle * Math.PI * 2 / Math.PI / 2; // Winkel
-    const startA = 0.02 * 2 * Math.PI; // gegen Uhrzeigersinn = negativer Winkel
-    const startAngle = -startA;
-
-    player = makeKart('#e53935', 'Du', false);
-    const ai1 = makeKart('#1e88e5', 'Bot Blau', true);
-    const ai2 = makeKart('#43a047', 'Bot Grün', true);
-    const ai3 = makeKart('#fdd835', 'Bot Gelb', true);
-    ais = [ai1, ai2, ai3];
-    allKarts = [player, ...ais];
-
-    // Verteile auf zwei Reihen im Startbereich
-    const midRx = track.rx - track.width / 2;
-    const midRy = track.ry - track.width / 2;
-    for (let i = 0; i < allKarts.length; i++) {
-      const lane = (i % 2 === 0) ? -22 : 22; // links/rechts auf der Strasse
-      const back = Math.floor(i / 2) * 36;
-      const ang = startAngle + back / midRx; // leicht zurück
-      const rxOff = midRx + lane * 0.0; // bleibt auf Mittellinie
-      const k = allKarts[i];
-      const r = midRx + lane;
-      const r2 = midRy + lane * (midRy / midRx);
-      k.x = track.cx + Math.cos(ang) * r;
-      k.y = track.cy + Math.sin(ang) * r2;
-      k.angle = -Math.PI / 2; // nach oben
-      k.lastT = progress(k.x, k.y);
-      k.laps = 0;
-      k.lap = 1;
-      k.speed = 0;
-      k.item = null;
-      k.boost = 0;
-      k.stun = 0;
-      k.finished = false;
+  function reset() {
+    state = {
+      teddy: {
+        x: 140,
+        y: GROUND_Y,
+        vy: 0,
+        w: 56,
+        h: 60,
+        onGround: true,
+        jumps: 0,
+        sliding: false,
+        slideT: 0,
+        runT: 0,
+      },
+      speed: 6,
+      gravity: 0.9,
+      jumpV: -16,
+      distance: 0,
+      honey: 0,
+      spawnTimer: 60,
+      honeyTimer: 90,
+      cloudTimer: 0,
+      bushTimer: 0,
+      time: 0,
+    };
+    obstacles = [];
+    honeys = [];
+    clouds = [];
+    bushes = [];
+    particles = [];
+    // Vorbefüllen
+    for (let i = 0; i < 5; i++) {
+      clouds.push({ x: Math.random() * W, y: 40 + Math.random() * 120, r: 20 + Math.random() * 20, s: 0.3 + Math.random() * 0.3 });
     }
-
-    startTime = performance.now();
+    for (let i = 0; i < 4; i++) {
+      bushes.push({ x: i * 260 + Math.random() * 80, y: GROUND_Y + 30, s: 0.6 + Math.random() * 0.4 });
+    }
+    dead = false;
+    running = true;
+    countdown = 60;
   }
 
-  // ---------- Eingabe ----------
-  const keys = {};
+  // ---------- Input ----------
+  function jump() {
+    if (!running) {
+      reset();
+      return;
+    }
+    if (dead) return;
+    const t = state.teddy;
+    if (t.jumps < 2) {
+      t.vy = state.jumpV * (t.jumps === 0 ? 1 : 0.85);
+      t.onGround = false;
+      t.jumps++;
+      spawnJumpDust();
+    }
+  }
+
+  function startSlide() {
+    if (!running || dead) return;
+    const t = state.teddy;
+    if (t.onGround) {
+      t.sliding = true;
+      t.slideT = 28;
+    }
+  }
+  function endSlide() {
+    if (state && state.teddy) {
+      state.teddy.sliding = false;
+      state.teddy.slideT = 0;
+    }
+  }
+
   window.addEventListener('keydown', e => {
-    keys[e.key.toLowerCase()] = true;
-    if (e.key === ' ') {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
       e.preventDefault();
-      usePlayerItem();
+      jump();
+    } else if (e.code === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+      e.preventDefault();
+      startSlide();
+    } else if (dead && (e.key === 'r' || e.key === 'R' || e.code === 'Enter')) {
+      reset();
     }
   });
   window.addEventListener('keyup', e => {
-    keys[e.key.toLowerCase()] = false;
+    if (e.code === 'ArrowDown' || e.key === 's' || e.key === 'S') endSlide();
   });
+  canvas.addEventListener('mousedown', jump);
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); jump(); }, { passive: false });
 
-  function usePlayerItem() {
-    if (!running || !player.item || player.finished) return;
-    fireItem(player);
+  // ---------- Spawning ----------
+  function spawnObstacle() {
+    const r = Math.random();
+    if (r < 0.45) {
+      // Bodenbox (Bauklotz)
+      const h = 36 + Math.floor(Math.random() * 20);
+      obstacles.push({
+        type: 'box',
+        x: W + 20,
+        y: GROUND_Y - h + 60,
+        w: 38,
+        h: h,
+        hb: { ox: 4, oy: 4, w: 30, h: h - 8 },
+      });
+    } else if (r < 0.7) {
+      // Doppelbox
+      const h = 32;
+      obstacles.push({
+        type: 'box2',
+        x: W + 20,
+        y: GROUND_Y - h + 60,
+        w: 78,
+        h: h,
+        hb: { ox: 4, oy: 4, w: 70, h: h - 8 },
+      });
+    } else if (r < 0.88) {
+      // Biene fliegt mittlere Höhe
+      obstacles.push({
+        type: 'bee',
+        x: W + 20,
+        y: GROUND_Y - 70 + Math.random() * 30,
+        w: 38,
+        h: 26,
+        baseY: 0,
+        t: 0,
+        hb: { ox: 4, oy: 4, w: 30, h: 18 },
+      });
+      const o = obstacles[obstacles.length - 1];
+      o.baseY = o.y;
+    } else {
+      // Hohe Biene -> mit Slide drunter durch
+      obstacles.push({
+        type: 'beeHigh',
+        x: W + 20,
+        y: GROUND_Y - 30,
+        w: 38,
+        h: 26,
+        baseY: 0,
+        t: 0,
+        hb: { ox: 4, oy: 4, w: 30, h: 18 },
+      });
+      const o = obstacles[obstacles.length - 1];
+      o.baseY = o.y;
+    }
   }
 
-  function fireItem(k) {
-    if (!k.item) return;
-    if (k.item === 'mushroom') {
-      k.boost = 90; // frames
-    } else if (k.item === 'banana') {
-      // Hinter dem Kart fallen lassen
-      const bx = k.x - Math.cos(k.angle) * 28;
-      const by = k.y - Math.sin(k.angle) * 28;
-      hazards.push({ x: bx, y: by, life: 60 * 20, owner: k });
-    } else if (k.item === 'shell') {
-      // Vor dem Kart abschiessen
-      const sx = k.x + Math.cos(k.angle) * 24;
-      const sy = k.y + Math.sin(k.angle) * 24;
-      projectiles.push({
-        x: sx, y: sy,
-        vx: Math.cos(k.angle) * 6,
-        vy: Math.sin(k.angle) * 6,
-        life: 180,
-        owner: k,
+  function spawnHoney() {
+    const pattern = Math.floor(Math.random() * 3);
+    const baseY = GROUND_Y - (40 + Math.random() * 80);
+    const count = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+      honeys.push({
+        x: W + 20 + i * 36,
+        y: pattern === 0 ? baseY
+           : pattern === 1 ? baseY - Math.sin(i * 0.7) * 30
+           : baseY - i * 6,
+        r: 12,
+        taken: false,
+        wob: Math.random() * Math.PI * 2,
       });
     }
-    k.item = null;
   }
 
-  function giveRandomItem(k) {
-    const r = Math.random();
-    if (r < 0.4) k.item = 'mushroom';
-    else if (r < 0.75) k.item = 'banana';
-    else k.item = 'shell';
+  function spawnJumpDust() {
+    for (let i = 0; i < 6; i++) {
+      particles.push({
+        x: state.teddy.x,
+        y: GROUND_Y + 50,
+        vx: -1 - Math.random() * 2,
+        vy: -Math.random() * 2,
+        life: 20,
+        r: 3 + Math.random() * 2,
+        c: '#d2b48c',
+      });
+    }
+  }
+
+  function spawnHoneyBurst(x, y) {
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2;
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * 2,
+        vy: Math.sin(a) * 2,
+        life: 25,
+        r: 2 + Math.random() * 2,
+        c: '#ffc107',
+      });
+    }
   }
 
   // ---------- Update ----------
-  function updateKart(k, dt) {
-    if (k.finished) {
-      k.speed *= 0.95;
-    } else if (k.stun > 0) {
-      k.stun--;
-      k.speed *= 0.9;
-    } else {
-      let throttle = 0, steer = 0;
-      if (k.isAI) {
-        // Fahre Richtung Mittellinie etwas voraus
-        const lookAhead = 0.04;
-        const t = k.lastT + lookAhead;
-        const a = -t * Math.PI * 2;
-        const midRx = track.rx - track.width / 2;
-        const midRy = track.ry - track.width / 2;
-        const tx = track.cx + Math.cos(a) * midRx;
-        const ty = track.cy + Math.sin(a) * midRy;
-        const dx = tx - k.x;
-        const dy = ty - k.y;
-        const desired = Math.atan2(dy, dx);
-        let diff = desired - k.angle;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
-        steer = Math.max(-1, Math.min(1, diff / 0.2));
-        throttle = 1;
+  function update() {
+    if (!running || dead) return;
+    state.time++;
+    if (countdown > 0) countdown--;
 
-        // gelegentlich Item benutzen
-        if (k.item && Math.random() < 0.005) fireItem(k);
-      } else {
-        if (keys['arrowup'] || keys['w']) throttle = 1;
-        if (keys['arrowdown'] || keys['s']) throttle = -0.6;
-        if (keys['arrowleft'] || keys['a']) steer = -1;
-        if (keys['arrowright'] || keys['d']) steer = 1;
-      }
+    // Geschwindigkeit langsam steigern
+    state.speed = 6 + Math.min(7, state.distance / 600);
 
-      // Beschleunigung
-      const maxS = k.maxSpeed * (k.boost > 0 ? 1.7 : 1);
-      if (throttle > 0) {
-        k.speed += k.accel * throttle;
-      } else if (throttle < 0) {
-        k.speed += k.accel * throttle * 0.6;
-      } else {
-        k.speed *= 0.97;
-      }
-      if (k.speed > maxS) k.speed = maxS;
-      if (k.speed < -1.5) k.speed = -1.5;
-
-      // Lenken (mehr bei höherer Geschwindigkeit, aber begrenzt)
-      const turnAmt = k.turn * (Math.abs(k.speed) / k.maxSpeed) * Math.sign(k.speed || 1);
-      k.angle += steer * (k.turn * 0.6 + turnAmt);
-    }
-
-    if (k.boost > 0) k.boost--;
-
-    // Bewege & kollidiere mit Strecke
-    const nx = k.x + Math.cos(k.angle) * k.speed;
-    const ny = k.y + Math.sin(k.angle) * k.speed;
-    if (onTrack(nx, ny)) {
-      k.x = nx;
-      k.y = ny;
-    } else if (onTrack(nx, k.y)) {
-      k.x = nx;
-      k.speed *= 0.6;
-    } else if (onTrack(k.x, ny)) {
-      k.y = ny;
-      k.speed *= 0.6;
-    } else {
-      // Ins Gras: stark abbremsen
-      k.speed *= 0.5;
-      // Etwas zurück Richtung Strecke schieben
-      const dxC = track.cx - k.x;
-      const dyC = track.cy - k.y;
-      const len = Math.hypot(dxC, dyC) || 1;
-      // Entscheide ob innen oder aussen
-      const dxN = (k.x - track.cx) / track.rx;
-      const dyN = (k.y - track.cy) / track.ry;
-      const outside = (dxN * dxN + dyN * dyN) > 1;
-      const sign = outside ? 1 : -1;
-      k.x += (dxC / len) * sign * 0.5;
-      k.y += (dyC / len) * sign * 0.5;
-    }
-
-    // Rundenfortschritt
-    const t = progress(k.x, k.y);
-    if (k.lastT > 0.85 && t < 0.15) {
-      k.laps++;
-      k.lap = Math.min(3, k.laps + 1);
-      if (k.laps >= 3 && !k.finished) {
-        k.finished = true;
-        k.finishTime = (performance.now() - startTime) / 1000;
-        finishedOrder.push(k);
-      }
-    } else if (k.lastT < 0.15 && t > 0.85) {
-      // rückwärts über Linie -> ignorieren
-    }
-    k.lastT = t;
-
-    // Item-Boxen
-    for (const b of itemBoxes) {
-      if (!b.active) {
-        b.respawn--;
-        if (b.respawn <= 0) b.active = true;
-        continue;
-      }
-      const dx = b.x - k.x, dy = b.y - k.y;
-      if (dx * dx + dy * dy < 22 * 22) {
-        b.active = false;
-        b.respawn = 60 * 4;
-        if (!k.item) giveRandomItem(k);
+    // Teddy Physik
+    const t = state.teddy;
+    t.runT += state.speed * 0.06;
+    if (!t.onGround) {
+      t.vy += state.gravity;
+      t.y += t.vy;
+      if (t.y >= GROUND_Y) {
+        t.y = GROUND_Y;
+        t.vy = 0;
+        t.onGround = true;
+        t.jumps = 0;
       }
     }
+    if (t.sliding) {
+      t.slideT--;
+      if (t.slideT <= 0) t.sliding = false;
+    }
 
-    // Bananen
-    for (const h of hazards) {
-      if (h.life <= 0) continue;
-      const dx = h.x - k.x, dy = h.y - k.y;
-      if (dx * dx + dy * dy < 16 * 16) {
-        h.life = 0;
-        k.stun = 30;
-        k.speed = 0;
-        k.angle += (Math.random() - 0.5) * 0.6;
+    // Hindernisse spawnen
+    state.spawnTimer--;
+    if (state.spawnTimer <= 0) {
+      spawnObstacle();
+      const base = 80 - Math.min(40, state.distance / 50);
+      state.spawnTimer = base + Math.random() * 60;
+    }
+    state.honeyTimer--;
+    if (state.honeyTimer <= 0) {
+      spawnHoney();
+      state.honeyTimer = 120 + Math.random() * 100;
+    }
+    state.cloudTimer--;
+    if (state.cloudTimer <= 0) {
+      clouds.push({ x: W + 40, y: 40 + Math.random() * 160, r: 18 + Math.random() * 24, s: 0.3 + Math.random() * 0.4 });
+      state.cloudTimer = 90 + Math.random() * 120;
+    }
+    state.bushTimer--;
+    if (state.bushTimer <= 0) {
+      bushes.push({ x: W + 40, y: GROUND_Y + 30, s: 0.6 + Math.random() * 0.5 });
+      state.bushTimer = 60 + Math.random() * 80;
+    }
+
+    // Bewegen
+    for (const o of obstacles) {
+      o.x -= state.speed;
+      if (o.type === 'bee' || o.type === 'beeHigh') {
+        o.t += 0.15;
+        o.y = o.baseY + Math.sin(o.t) * 8;
       }
     }
-  }
+    obstacles = obstacles.filter(o => o.x + o.w > -20);
 
-  function updateProjectiles() {
-    for (const p of projectiles) {
-      if (p.life <= 0) continue;
-      p.life--;
+    for (const h of honeys) {
+      h.x -= state.speed;
+      h.wob += 0.1;
+    }
+    honeys = honeys.filter(h => h.x > -20 && !h.taken);
+
+    for (const c of clouds) c.x -= state.speed * c.s * 0.2;
+    clouds = clouds.filter(c => c.x + c.r > -20);
+
+    for (const b of bushes) b.x -= state.speed * 0.6;
+    bushes = bushes.filter(b => b.x > -120);
+
+    for (const p of particles) {
       p.x += p.vx;
       p.y += p.vy;
-      // Vom Strassenrand abprallen
-      if (!onTrack(p.x, p.y)) {
-        // Versuche jeweils Achse
-        if (onTrack(p.x - p.vx, p.y)) { p.vy = -p.vy; p.y += p.vy; }
-        else if (onTrack(p.x, p.y - p.vy)) { p.vx = -p.vx; p.x += p.vx; }
-        else { p.life = 0; }
-      }
-      // Treffer
-      for (const k of allKarts) {
-        if (k === p.owner) continue;
-        const dx = k.x - p.x, dy = k.y - p.y;
-        if (dx * dx + dy * dy < 18 * 18) {
-          k.stun = 45;
-          k.speed = 0;
-          p.life = 0;
-          break;
-        }
+      p.vy += 0.15;
+      p.life--;
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    state.distance += state.speed * 0.1;
+
+    // Kollision: Teddy Hitbox
+    const th = teddyHitbox();
+    for (const o of obstacles) {
+      const ob = {
+        x: o.x + o.hb.ox,
+        y: o.y + o.hb.oy,
+        w: o.hb.w,
+        h: o.hb.h,
+      };
+      if (overlap(th, ob)) {
+        die();
+        return;
       }
     }
-    projectiles = projectiles.filter(p => p.life > 0);
-    hazards = hazards.filter(h => h.life > 0);
-    for (const h of hazards) h.life--;
+    for (const h of honeys) {
+      if (h.taken) continue;
+      const dx = (th.x + th.w / 2) - h.x;
+      const dy = (th.y + th.h / 2) - h.y;
+      if (dx * dx + dy * dy < (h.r + 18) * (h.r + 18)) {
+        h.taken = true;
+        state.honey++;
+        spawnHoneyBurst(h.x, h.y);
+      }
+    }
+
+    scoreEl.textContent = Math.floor(state.distance);
+    honeyEl.textContent = state.honey;
+  }
+
+  function teddyHitbox() {
+    const t = state.teddy;
+    if (t.sliding) {
+      return { x: t.x - 22, y: t.y + 30, w: 56, h: 30 };
+    }
+    return { x: t.x - 22, y: t.y - 12, w: 44, h: 70 };
+  }
+
+  function overlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function die() {
+    dead = true;
+    running = false;
+    const dist = Math.floor(state.distance);
+    const finalScore = dist + state.honey * 5;
+    if (finalScore > best) {
+      best = finalScore;
+      localStorage.setItem(BEST_KEY, String(best));
+      bestEl.textContent = best;
+    }
+    // Sturzpartikel
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2;
+      particles.push({
+        x: state.teddy.x,
+        y: state.teddy.y + 20,
+        vx: Math.cos(a) * 4,
+        vy: Math.sin(a) * 4 - 2,
+        life: 40,
+        r: 3 + Math.random() * 3,
+        c: '#c98a4a',
+      });
+    }
   }
 
   // ---------- Zeichnen ----------
-  function drawTrack() {
-    // Grasshintergrund
-    ctx.fillStyle = '#4caf50';
-    ctx.fillRect(0, 0, W, H);
+  function drawBackground() {
+    // Himmelsverlauf
+    const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    g.addColorStop(0, '#87ceeb');
+    g.addColorStop(1, '#cfe9f5');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, GROUND_Y);
 
-    // Aussen-Ellipse (Strasse)
-    ctx.fillStyle = '#555';
+    // Sonne
+    ctx.fillStyle = 'rgba(255, 230, 130, 0.9)';
     ctx.beginPath();
-    ctx.ellipse(track.cx, track.cy, track.rx, track.ry, 0, 0, Math.PI * 2);
+    ctx.arc(W - 110, 90, 36, 0, Math.PI * 2);
     ctx.fill();
 
-    // Innen-Insel
-    ctx.fillStyle = '#4caf50';
-    ctx.beginPath();
-    ctx.ellipse(track.cx, track.cy, track.rx - track.width, track.ry - track.width, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Mittelstreifen
-    ctx.save();
-    ctx.strokeStyle = '#ffeb3b';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([12, 16]);
-    ctx.beginPath();
-    ctx.ellipse(track.cx, track.cy, track.rx - track.width / 2, track.ry - track.width / 2, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-
-    // Startlinie (rechts)
-    const midRx = track.rx - track.width / 2;
-    const midRy = track.ry - track.width / 2;
-    const innerRx = track.rx - track.width;
-    const innerRy = track.ry - track.width;
-    ctx.save();
-    ctx.translate(track.cx, track.cy);
+    // Wolken
     ctx.fillStyle = '#fff';
-    const segs = 6;
-    for (let i = 0; i < segs; i++) {
-      const t1 = i / segs;
-      const t2 = (i + 0.5) / segs;
-      const r1x = innerRx + (track.rx - innerRx) * t1;
-      const r1y = innerRy + (track.ry - innerRy) * t1;
-      const r2x = innerRx + (track.rx - innerRx) * t2;
-      const r2y = innerRy + (track.ry - innerRy) * t2;
-      ctx.fillRect(r1x, -3, r2x - r1x, 6);
+    for (const c of clouds) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+      ctx.arc(c.x + c.r * 0.7, c.y + 4, c.r * 0.8, 0, Math.PI * 2);
+      ctx.arc(c.x - c.r * 0.7, c.y + 4, c.r * 0.8, 0, Math.PI * 2);
+      ctx.fill();
     }
+
+    // Berge im Hintergrund
+    ctx.fillStyle = '#9ec5a6';
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_Y);
+    for (let i = 0; i <= 12; i++) {
+      const x = (i / 12) * W;
+      const y = GROUND_Y - 60 - Math.sin(i * 1.3 + state.time * 0.001) * 25;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, GROUND_Y);
+    ctx.closePath();
+    ctx.fill();
+
+    // Büsche
+    for (const b of bushes) {
+      drawBush(b.x, b.y, b.s);
+    }
+
+    // Boden
+    ctx.fillStyle = '#7ec850';
+    ctx.fillRect(0, GROUND_Y + 50, W, H - (GROUND_Y + 50));
+    ctx.fillStyle = '#6db045';
+    ctx.fillRect(0, GROUND_Y + 50, W, 6);
+    // Gras-Tupfen
+    ctx.fillStyle = '#4f8a31';
+    const offset = (state.time * (state.speed || 6)) % 16;
+    for (let x = -offset; x < W; x += 16) {
+      ctx.fillRect(x, GROUND_Y + 56, 4, 2);
+    }
+  }
+
+  function drawBush(x, y, s) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    ctx.fillStyle = '#4f8a31';
+    ctx.beginPath();
+    ctx.arc(-20, 0, 18, 0, Math.PI * 2);
+    ctx.arc(0, -8, 22, 0, Math.PI * 2);
+    ctx.arc(20, 0, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#6dac4a';
+    ctx.beginPath();
+    ctx.arc(-8, -10, 6, 0, Math.PI * 2);
+    ctx.arc(8, -6, 5, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
-  function drawItemBoxes() {
-    for (const b of itemBoxes) {
-      if (!b.active) continue;
-      ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate((performance.now() / 400) % (Math.PI * 2));
-      ctx.fillStyle = '#ff9800';
-      ctx.fillRect(-10, -10, 20, 20);
+  function drawTeddy() {
+    const t = state.teddy;
+    ctx.save();
+    ctx.translate(t.x, t.y);
+
+    // Lauf-Bob
+    let bob = 0;
+    if (t.onGround && !t.sliding) bob = Math.abs(Math.sin(t.runT)) * 3;
+    const legSwing = t.onGround && !t.sliding ? Math.sin(t.runT * 2) * 10 : 0;
+    const armSwing = t.onGround && !t.sliding ? Math.sin(t.runT * 2 + Math.PI) * 10 : 0;
+
+    if (t.sliding) {
+      // Slide-Pose: liegender Teddy
+      ctx.translate(0, 30);
+      ctx.rotate(-0.2);
+    }
+
+    // Schatten
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(0, 56, 26 - (t.onGround ? 0 : 10), 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.translate(0, -bob);
+
+    // Beine
+    ctx.fillStyle = '#c98a4a';
+    if (t.sliding) {
+      drawEllipse(-4, 38, 22, 10);
+      drawEllipse(20, 38, 22, 10);
+    } else if (!t.onGround) {
+      drawEllipse(-8, 40, 11, 16);
+      drawEllipse(10, 40, 11, 16);
+    } else {
+      drawEllipse(-8, 40 + legSwing * 0.2, 10, 18);
+      drawEllipse(10, 40 - legSwing * 0.2, 10, 18);
+      ctx.fillStyle = '#a06a30';
+      drawEllipse(-8 + legSwing * 0.5, 50, 10, 6);
+      drawEllipse(10 - legSwing * 0.5, 50, 10, 6);
+      ctx.fillStyle = '#c98a4a';
+    }
+
+    // Bauch
+    drawEllipse(0, 18, 22, 26);
+    ctx.fillStyle = '#f3d6ad';
+    drawEllipse(0, 22, 14, 18);
+
+    // Arme
+    ctx.fillStyle = '#c98a4a';
+    if (t.sliding) {
+      drawEllipse(-22, 18, 14, 8);
+      drawEllipse(20, 18, 14, 8);
+    } else {
+      drawEllipse(-20, 12 + armSwing * 0.4, 8, 18);
+      drawEllipse(20, 12 - armSwing * 0.4, 8, 18);
+    }
+
+    // Kopf
+    const headY = -16;
+    ctx.fillStyle = '#c98a4a';
+    drawCircle(-16, headY - 18, 9); // Ohr
+    drawCircle( 16, headY - 18, 9);
+    ctx.fillStyle = '#a06a30';
+    drawCircle(-16, headY - 18, 5);
+    drawCircle( 16, headY - 18, 5);
+
+    ctx.fillStyle = '#c98a4a';
+    drawCircle(0, headY, 26);
+
+    // Schnauze
+    ctx.fillStyle = '#f3d6ad';
+    drawEllipse(0, headY + 8, 13, 9);
+
+    // Nase
+    ctx.fillStyle = '#3b2412';
+    drawEllipse(0, headY + 2, 4, 3);
+    // Mund (grinst beim Laufen, "o" beim Sturz)
+    ctx.strokeStyle = '#3b2412';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (dead) {
+      ctx.arc(0, headY + 14, 3, 0, Math.PI * 2);
+    } else {
+      ctx.arc(0, headY + 10, 4, 0.1, Math.PI - 0.1);
+    }
+    ctx.stroke();
+
+    // Augen
+    ctx.fillStyle = '#3b2412';
+    if (dead) {
+      ctx.strokeStyle = '#3b2412';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-12, headY - 8); ctx.lineTo(-4, headY - 2);
+      ctx.moveTo(-12, headY - 2); ctx.lineTo(-4, headY - 8);
+      ctx.moveTo( 4, headY - 8); ctx.lineTo( 12, headY - 2);
+      ctx.moveTo( 4, headY - 2); ctx.lineTo( 12, headY - 8);
+      ctx.stroke();
+    } else {
+      drawCircle(-8, headY - 4, 3);
+      drawCircle( 8, headY - 4, 3);
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 14px sans-serif';
+      drawCircle(-7, headY - 5, 1);
+      drawCircle( 9, headY - 5, 1);
+    }
+
+    // Schleife
+    ctx.fillStyle = '#e63946';
+    ctx.beginPath();
+    ctx.moveTo(-6, headY + 22); ctx.lineTo(-12, headY + 18); ctx.lineTo(-12, headY + 26); ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo( 6, headY + 22); ctx.lineTo( 12, headY + 18); ctx.lineTo( 12, headY + 26); ctx.closePath();
+    ctx.fill();
+    drawCircle(0, headY + 22, 3);
+
+    ctx.restore();
+  }
+
+  function drawObstacles() {
+    for (const o of obstacles) {
+      if (o.type === 'box' || o.type === 'box2') {
+        // Bauklotz/Bauklötze
+        const segs = o.type === 'box2' ? 2 : 1;
+        for (let i = 0; i < segs; i++) {
+          drawBlock(o.x + i * (o.w / segs), o.y, o.w / segs, o.h);
+        }
+      } else if (o.type === 'bee' || o.type === 'beeHigh') {
+        drawBee(o.x + o.w / 2, o.y + o.h / 2);
+      }
+    }
+  }
+
+  function drawBlock(x, y, w, h) {
+    ctx.fillStyle = '#d97a4a';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#b95a2a';
+    ctx.fillRect(x, y, w, 6);
+    ctx.fillRect(x, y + h - 6, w, 6);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('A', x + w / 2, y + h / 2 + 7);
+    ctx.textAlign = 'start';
+  }
+
+  function drawBee(cx, cy) {
+    const t = performance.now() / 60;
+    ctx.save();
+    ctx.translate(cx, cy);
+    // Flügel
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    const flap = Math.sin(t) * 4;
+    drawEllipse(-4, -8 - flap, 10, 5);
+    drawEllipse( 4, -8 + flap, 10, 5);
+    // Körper
+    ctx.fillStyle = '#ffc107';
+    drawEllipse(0, 0, 16, 10);
+    ctx.fillStyle = '#222';
+    ctx.fillRect(-8, -10, 4, 20);
+    ctx.fillRect( 2, -10, 4, 20);
+    // Auge
+    ctx.fillStyle = '#222';
+    drawCircle(11, -2, 2);
+    // Stachel
+    ctx.fillStyle = '#222';
+    ctx.beginPath();
+    ctx.moveTo(-16, 0); ctx.lineTo(-22, -2); ctx.lineTo(-22, 2); ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawHoneys() {
+    for (const h of honeys) {
+      if (h.taken) continue;
+      const wob = Math.sin(h.wob) * 2;
+      ctx.save();
+      ctx.translate(h.x, h.y + wob);
+      // Glas
+      ctx.fillStyle = '#ffb300';
+      drawEllipse(0, 0, 12, 12);
+      ctx.fillStyle = '#ffd54f';
+      drawEllipse(-3, -3, 4, 5);
+      // Deckel
+      ctx.fillStyle = '#6b4226';
+      ctx.fillRect(-9, -14, 18, 5);
+      // Label
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px sans-serif';
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('?', 0, 1);
+      ctx.fillText('🍯', 0, 4);
+      ctx.textAlign = 'start';
       ctx.restore();
     }
   }
 
-  function drawKart(k) {
-    ctx.save();
-    ctx.translate(k.x, k.y);
-    ctx.rotate(k.angle);
-    // Schatten
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.fillRect(-12, -8, 24, 18);
-    // Körper
-    ctx.fillStyle = k.color;
-    ctx.fillRect(-12, -9, 24, 18);
-    // Front
-    ctx.fillStyle = '#222';
-    ctx.fillRect(8, -7, 5, 14);
-    // Fenster
-    ctx.fillStyle = '#90caf9';
-    ctx.fillRect(-2, -6, 8, 12);
-    // Räder
-    ctx.fillStyle = '#000';
-    ctx.fillRect(-12, -11, 6, 3);
-    ctx.fillRect(-12, 8, 6, 3);
-    ctx.fillRect(6, -11, 6, 3);
-    ctx.fillRect(6, 8, 6, 3);
-
-    if (k.boost > 0) {
-      ctx.fillStyle = '#ffeb3b';
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.min(1, p.life / 20);
+      ctx.fillStyle = p.c;
       ctx.beginPath();
-      ctx.moveTo(-12, -5);
-      ctx.lineTo(-22 - Math.random() * 6, 0);
-      ctx.lineTo(-12, 5);
-      ctx.closePath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fill();
+      ctx.globalAlpha = 1;
     }
-    if (k.stun > 0) {
+  }
+
+  function drawCircle(x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  function drawEllipse(x, y, rx, ry) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawOverlay() {
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('★', 0, -14);
+      ctx.font = 'bold 56px sans-serif';
+      ctx.fillText('Aua!', W / 2, H / 2 - 50);
+      ctx.font = 'bold 28px sans-serif';
+      const final = Math.floor(state.distance) + state.honey * 5;
+      ctx.fillText('Score: ' + final, W / 2, H / 2);
+      ctx.fillText('🍯 ' + state.honey + '  ·  ' + Math.floor(state.distance) + 'm', W / 2, H / 2 + 36);
+      ctx.font = '20px sans-serif';
+      ctx.fillText('Klick oder Leertaste = nochmal', W / 2, H / 2 + 90);
+      ctx.textAlign = 'start';
+    } else if (!running) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 64px sans-serif';
+      ctx.fillText('Teddy Run', W / 2, H / 2 - 40);
+      ctx.font = '22px sans-serif';
+      ctx.fillText('Leertaste / Klick = Springen (Doppelsprung!)', W / 2, H / 2 + 10);
+      ctx.fillText('Pfeil-↓ = Ducken (unter Bienen durch)', W / 2, H / 2 + 40);
+      ctx.fillText('Sammle 🍯 Honig, weiche Bauklötzen und Bienen aus', W / 2, H / 2 + 70);
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText('Klick zum Starten!', W / 2, H / 2 + 120);
+      ctx.textAlign = 'start';
+    } else if (countdown > 0) {
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 40px sans-serif';
+      ctx.globalAlpha = countdown / 60;
+      ctx.fillText('Los!', W / 2, 120);
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'start';
     }
-    ctx.restore();
-  }
-
-  function drawHazards() {
-    for (const h of hazards) {
-      ctx.fillStyle = '#ffeb3b';
-      ctx.beginPath();
-      ctx.arc(h.x, h.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#827717';
-      ctx.beginPath();
-      ctx.arc(h.x - 2, h.y - 2, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  function drawProjectiles() {
-    for (const p of projectiles) {
-      ctx.fillStyle = '#2e7d32';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#a5d6a7';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  function updateHUD() {
-    lapEl.textContent = Math.min(3, player.lap);
-
-    const ranking = [...allKarts].sort((a, b) => {
-      if (a.finished && b.finished) return a.finishTime - b.finishTime;
-      if (a.finished) return -1;
-      if (b.finished) return 1;
-      const ap = a.laps + a.lastT;
-      const bp = b.laps + b.lastT;
-      return bp - ap;
-    });
-    posEl.textContent = (ranking.indexOf(player) + 1);
-
-    const elapsed = (performance.now() - startTime) / 1000;
-    timeEl.textContent = elapsed.toFixed(1);
-
-    const icons = { mushroom: '🍄', banana: '🍌', shell: '🐢' };
-    itemEl.textContent = player.item ? icons[player.item] : '–';
-  }
-
-  function allFinished() {
-    return allKarts.every(k => k.finished);
-  }
-
-  function showResults() {
-    running = false;
-    const ranking = [...allKarts].sort((a, b) => a.finishTime - b.finishTime);
-    let html = '<h1>Ergebnis</h1><p style="font-size:20px;line-height:1.8">';
-    ranking.forEach((k, i) => {
-      const me = (k === player) ? ' (Du)' : '';
-      html += `${i + 1}. <b style="color:${k.color}">${k.name}</b>${me} – ${k.finishTime.toFixed(2)}s<br>`;
-    });
-    html += '</p><button id="startBtn">Nochmal</button>';
-    overlay.innerHTML = html;
-    overlay.classList.remove('hidden');
-    document.getElementById('startBtn').onclick = startGame;
   }
 
   // ---------- Hauptschleife ----------
   function loop() {
-    if (running) {
-      for (const k of allKarts) updateKart(k, 1);
-      updateProjectiles();
+    update();
 
-      drawTrack();
-      drawItemBoxes();
-      drawHazards();
-      drawProjectiles();
-      for (const k of allKarts) drawKart(k);
-      updateHUD();
+    drawBackground();
+    drawHoneys();
+    drawObstacles();
+    if (state) drawTeddy();
+    drawParticles();
+    drawOverlay();
 
-      if (allFinished()) {
-        showResults();
-      }
-    }
     requestAnimationFrame(loop);
   }
 
-  function startGame() {
-    resetRace();
-    overlay.classList.add('hidden');
-    running = true;
+  // Initialer Zustand (Startscreen)
+  state = {
+    teddy: { x: 140, y: GROUND_Y, vy: 0, w: 56, h: 60, onGround: true, jumps: 0, sliding: false, slideT: 0, runT: 0 },
+    speed: 0, gravity: 0.9, jumpV: -16,
+    distance: 0, honey: 0, time: 0,
+    spawnTimer: 9999, honeyTimer: 9999, cloudTimer: 9999, bushTimer: 9999,
+  };
+  obstacles = [];
+  honeys = [];
+  clouds = [];
+  bushes = [];
+  particles = [];
+  for (let i = 0; i < 5; i++) {
+    clouds.push({ x: Math.random() * W, y: 40 + Math.random() * 120, r: 20 + Math.random() * 20, s: 0.3 + Math.random() * 0.3 });
   }
-
-  startBtn.onclick = startGame;
-
-  // Erstes Frame zeichnen
-  drawTrack();
-  drawItemBoxes();
-  requestAnimationFrame(loop);
+  for (let i = 0; i < 4; i++) {
+    bushes.push({ x: i * 260, y: GROUND_Y + 30, s: 0.6 + Math.random() * 0.4 });
+  }
+  loop();
 })();
 </script>
 </body>
