@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Teddy – Schwarz & Weiß</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Teddy</h1>
+    <p class="subtitle">Klick mich an</p>
+  </header>
+
+  <main>
+    <div class="stage">
+      <svg id="teddy" viewBox="0 0 400 480" xmlns="http://www.w3.org/2000/svg" aria-label="Teddybär">
+        <!-- Schatten -->
+        <ellipse cx="200" cy="455" rx="120" ry="12" fill="#000" opacity="0.15" />
+
+        <!-- Linkes Ohr -->
+        <g id="ear-left">
+          <circle cx="115" cy="95" r="40" fill="#fff" stroke="#000" stroke-width="6" />
+          <circle cx="115" cy="95" r="18" fill="#000" />
+        </g>
+
+        <!-- Rechtes Ohr -->
+        <g id="ear-right">
+          <circle cx="285" cy="95" r="40" fill="#fff" stroke="#000" stroke-width="6" />
+          <circle cx="285" cy="95" r="18" fill="#000" />
+        </g>
+
+        <!-- Körper -->
+        <g id="body">
+          <ellipse cx="200" cy="340" rx="120" ry="110" fill="#fff" stroke="#000" stroke-width="6" />
+          <!-- Bauchfleck -->
+          <ellipse cx="200" cy="360" rx="70" ry="75" fill="#000" opacity="0.08" />
+        </g>
+
+        <!-- Linker Arm -->
+        <g id="arm-left" style="transform-origin: 110px 270px;">
+          <ellipse cx="90" cy="310" rx="32" ry="55" fill="#fff" stroke="#000" stroke-width="6" transform="rotate(-20 90 310)" />
+          <circle cx="70" cy="355" r="14" fill="#000" />
+        </g>
+
+        <!-- Rechter Arm (winkt) -->
+        <g id="arm-right" style="transform-origin: 290px 270px;">
+          <ellipse cx="310" cy="310" rx="32" ry="55" fill="#fff" stroke="#000" stroke-width="6" transform="rotate(20 310 310)" />
+          <circle cx="330" cy="355" r="14" fill="#000" />
+        </g>
+
+        <!-- Beine -->
+        <g id="legs">
+          <ellipse cx="155" cy="440" rx="30" ry="22" fill="#fff" stroke="#000" stroke-width="6" />
+          <ellipse cx="245" cy="440" rx="30" ry="22" fill="#fff" stroke="#000" stroke-width="6" />
+          <circle cx="155" cy="440" r="8" fill="#000" />
+          <circle cx="245" cy="440" r="8" fill="#000" />
+        </g>
+
+        <!-- Kopf -->
+        <g id="head">
+          <circle cx="200" cy="180" r="110" fill="#fff" stroke="#000" stroke-width="6" />
+
+          <!-- Schnauze -->
+          <ellipse cx="200" cy="225" rx="55" ry="42" fill="#fff" stroke="#000" stroke-width="5" />
+
+          <!-- Linkes Auge -->
+          <g class="eye eye-left">
+            <circle class="eye-white" cx="160" cy="170" r="16" fill="#fff" stroke="#000" stroke-width="4" />
+            <circle class="pupil" cx="160" cy="172" r="8" fill="#000" />
+            <circle class="sparkle" cx="163" cy="168" r="2.5" fill="#fff" />
+            <path class="lid lid-left" d="M 144 170 Q 160 170 176 170" fill="none" stroke="#000" stroke-width="6" stroke-linecap="round" />
+          </g>
+
+          <!-- Rechtes Auge -->
+          <g class="eye eye-right">
+            <circle class="eye-white" cx="240" cy="170" r="16" fill="#fff" stroke="#000" stroke-width="4" />
+            <circle class="pupil" cx="240" cy="172" r="8" fill="#000" />
+            <circle class="sparkle" cx="243" cy="168" r="2.5" fill="#fff" />
+            <path class="lid lid-right" d="M 224 170 Q 240 170 256 170" fill="none" stroke="#000" stroke-width="6" stroke-linecap="round" />
+          </g>
+
+          <!-- Nase -->
+          <path d="M 185 210 Q 200 200 215 210 Q 215 222 200 226 Q 185 222 185 210 Z" fill="#000" />
+
+          <!-- Mund -->
+          <path id="mouth" d="M 200 226 L 200 240 Q 185 255 175 248 M 200 240 Q 215 255 225 248" fill="none" stroke="#000" stroke-width="4" stroke-linecap="round" />
+        </g>
+
+        <!-- Fliege/Schleife (kleines Detail) -->
+        <g id="bow" style="transform-origin: 200px 250px;">
+          <path d="M 175 250 L 200 240 L 200 260 Z" fill="#000" />
+          <path d="M 225 250 L 200 240 L 200 260 Z" fill="#000" />
+          <circle cx="200" cy="250" r="6" fill="#fff" stroke="#000" stroke-width="3" />
+        </g>
+      </svg>
+    </div>
+
+    <div class="controls">
+      <button data-action="wave">Winken</button>
+      <button data-action="blink">Blinzeln</button>
+      <button data-action="dance">Tanzen</button>
+      <button data-action="hug">Umarmung</button>
+    </div>
+
+    <p id="message" aria-live="polite">Hallo! Ich bin dein Teddy.</p>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
